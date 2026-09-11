@@ -20,6 +20,8 @@
 #include <imgui_impl_opengl3.h>
 #include <implot.h>
 
+#include "panels/garch_panel.hpp"
+#include "panels/greeks_panel.hpp"
 #include "panels/kalman_panel.hpp"
 #include "panels/streaming_panel.hpp"
 #include "quantviz/viz/scene_registry.hpp"
@@ -90,6 +92,8 @@ int main() {
     // ------------------------------------------------------------------ scenes
     quantviz::viz::SceneRegistry registry;
     registry.add("Streaming", quantviz::viz::make_streaming_scene);
+    registry.add("Greeks", quantviz::viz::make_greeks_scene);
+    registry.add("GARCH", quantviz::viz::make_garch_scene);
     registry.add("Kalman pair", quantviz::viz::make_kalman_scene);
     if (!registry.select(0)) {
         std::fprintf(stderr, "initial scene failed to start\n");

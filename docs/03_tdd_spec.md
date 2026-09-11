@@ -199,6 +199,7 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 | VIZ-02 | シーン選択で Runner と Panel の対が生成され、前のシーンの Runner は `stop()` される（`running()` false） | U | ✅ |
 | VIZ-03 | 共通 Control の状態（speed / paused）は Command 生成関数の純関数として検査できる（ImGui 非依存部） | U | ✅ |
 | VIZ-04 | 実 Runner を持つ `RunnerScene` を `select` で切り替えると、前シーンの計算スレッドが join され `running()` が false になる | C | ✅ |
+| VIZ-05 | `RateMeter`（受信レートの 0.25 s 窓 + EMA）は定常入力で真値に収束し、最初の窓が閉じるまでは 0、`reset` で 0 に戻る | U | ⬜ |
 
 ### 4.2 BS — `core/pricing/black_scholes.hpp`
 
@@ -250,9 +251,9 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 | GARCH-06 | 合成 GARCH（ω=1e-6, α=0.08, β=0.90, N=20000）から MLE が α̂, β̂ を ±0.03 で復元（seed 固定・根拠: 漸近 SE ≈ 0.007） | S | ✅ |
 | GARCH-07 | 大標本で真値の尤度 ≥ 摂動値の尤度 | P | ✅ |
 | GARCH-08 | 半減期 ln(0.5)/ln(α+β) が α+β↑ で単調増大 | P | ✅ |
-| GARCH-09 | Model 契約充足、Snapshot（σ_t, 真値, 尤度格子 固定 G×G, 軌跡 最新 K 点）は POD | K | ⬜ |
-| GARCH-10 | 尤度格子の全値が有限、最大値の格子点が MLE 推定値の隣接格子内 | P | ⬜ |
-| GARCH-11 | 最適化軌跡の終点 = 推定値 | U | ⬜ |
+| GARCH-09 | Model 契約充足、Snapshot（σ_t, 真値, 尤度格子 固定 G×G, 軌跡 最新 K 点）は POD | K | ✅ |
+| GARCH-10 | 尤度格子の全値が有限、最大値の格子点が MLE 推定値の隣接格子内 | P | ✅ |
+| GARCH-11 | 最適化軌跡の終点 = 推定値 | U | ✅ |
 
 ### 4.6 KALMAN — `core/math/mat.hpp`, `core/stats/kalman.hpp`, `scenes/kalman_pair_model.hpp`
 

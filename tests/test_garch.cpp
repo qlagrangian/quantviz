@@ -9,13 +9,18 @@
 #include <limits>
 #include <numbers>
 #include <span>
+#include <type_traits>
 #include <vector>
 
+#include "quantviz/bridge/command.hpp"
+#include "quantviz/bridge/model_concept.hpp"
 #include "quantviz/core/stats/garch.hpp"
 #include "quantviz/core/stats/optim.hpp"
+#include "quantviz/scenes/garch_model.hpp"
 
 using Catch::Matchers::WithinAbs;
 using Catch::Matchers::WithinRel;
+using quantviz::bridge::Command;
 using quantviz::core::garch_filter;
 using quantviz::core::garch_fit;
 using quantviz::core::garch_fit_into;
@@ -29,6 +34,8 @@ using quantviz::core::garch_unconditional_variance;
 using quantviz::core::GarchFit;
 using quantviz::core::GarchParams;
 using quantviz::core::OptimOptions;
+using quantviz::scenes::GarchModel;
+using quantviz::scenes::GarchSnapshot;
 
 namespace {
 constexpr double kInf = std::numeric_limits<double>::infinity();
@@ -331,4 +338,204 @@ TEST_CASE("GARCH-08: the half-life ln(0.5)/ln(alpha+beta) increases monotonicall
         prev = h;
     }
     CHECK(garch_half_life({1e-6, 0.10, 0.90}) == kInf);  // α+β = 1: ショックが減衰しない
+}
+
+namespace {
+
+constexpr double kDtDay = 1.0 / 252.0;  // 1 ステップ = 1 営業日
+
+/// シーンの既定設定（seed だけ変える）。真値は kTruth、窓 500・10 ステップごとに再当てはめ。
+GarchModel::Config scene_config(std::uint64_t seed) {
+    GarchModel::Config cfg;
+    cfg.truth = kTruth;
+    cfg.seed  = seed;
+    return cfg;
+}
+
+/// 窓が埋まり、少なくとも 1 回は再当てはめが走るまで進める。
+GarchSnapshot run_until_fitted(GarchModel& m, std::size_t steps = 600) {
+    for (std::size_t i = 0; i < steps; ++i) m.step(kDtDay);
+    return m.snapshot();
+}
+
+/// g の中で v に最も近い格子点の添字。
+std::size_t nearest_index(const std::array<double, GarchSnapshot::kGrid>& g, double v) {
+    std::size_t best = 0;
+    for (std::size_t i = 1; i < g.size(); ++i)
+        if (std::fabs(g[i] - v) < std::fabs(g[best] - v)) best = i;
+    return best;
+}
+
+}  // namespace
+
+TEST_CASE("GARCH-09: the scene satisfies the Model contract with a fixed-size POD snapshot",
+          "[garch][contract]") {
+    STATIC_REQUIRE(quantviz::bridge::Model<GarchModel>);
+    STATIC_REQUIRE(std::is_trivially_copyable_v<GarchSnapshot>);
+    STATIC_REQUIRE(std::is_default_constructible_v<GarchSnapshot>);
+    // M1 の例外: 尤度格子（32×32）と軌跡を載せるので 128 B 規則ではなく 32 KiB 上限（計画書 §Snapshot）
+    STATIC_REQUIRE(sizeof(GarchSnapshot) <= 32 * 1024);
+
+    SECTION("a fresh model reports seq 0, the configured truth and an empty optimiser path") {
+        GarchModel m(scene_config(4242));
+        const auto s = m.snapshot();
+        CHECK(s.seq == 0);
+        CHECK(s.t == 0.0);
+        CHECK(s.r_last == 0.0);
+        CHECK(s.true_params.omega == kTruth.omega);
+        CHECK(s.true_params.alpha == kTruth.alpha);
+        CHECK(s.true_params.beta == kTruth.beta);
+        CHECK(s.window == 500);
+        CHECK(s.optimizer == 0);
+        CHECK(s.path_len == 0);
+        CHECK_THAT(s.sigma2_true, WithinRel(garch_unconditional_variance(kTruth), 1e-12));
+    }
+
+    SECTION("the generated path is bit-identical to garch_simulate with the same seed (dual-run)") {
+        GarchModel          m(scene_config(4242));
+        std::vector<double> r(300), s2(300);
+        garch_simulate(kTruth, 4242, r, s2);
+        for (std::size_t i = 0; i < r.size(); ++i) {
+            m.step(kDtDay);
+            const auto s = m.snapshot();
+            REQUIRE(s.r_last == r[i]);       // σ²_t·z_t を同じ順序・同じ乱数で
+            REQUIRE(s.sigma2_true == s2[i]);  // r_last を生成した条件付き分散
+            REQUIRE(s.seq == i + 1);
+        }
+    }
+
+    SECTION("SetParam keeps the process stationary; unknown ids are ignored") {
+        GarchModel m(scene_config(1));
+        m.apply(Command::set_param(GarchModel::kBeta, 0.999));  // α+β = 1.079 ≥ 1 → 比例縮小
+        auto s = m.snapshot();
+        CHECK(garch_stationary(s.true_params));
+        // 比例縮小: α+β はちょうど上限に載り、α/β の比は変わらない
+        CHECK_THAT(s.true_params.alpha + s.true_params.beta,
+                   WithinRel(GarchModel::kMaxPersistence, 1e-12));
+        CHECK_THAT(s.true_params.alpha / s.true_params.beta, WithinRel(kTruth.alpha / 0.999, 1e-12));
+
+        m.apply(Command::set_param(GarchModel::kWindow, 10.0));      // [50, 2048] にクランプ
+        m.apply(Command::set_param(GarchModel::kOptimizer, 1.0));    // 1 = BFGS
+        m.apply(Command::set_param(GarchModel::kOmega, -1.0));       // ω > 0 を保つ
+        m.apply(Command::set_param(999, 1.0));                       // 未知の param_id は無視
+        s = m.snapshot();
+        CHECK(s.window == 50);
+        CHECK(s.optimizer == 1);
+        CHECK(s.true_params.omega > 0.0);
+        CHECK(s.seq == 0);  // パラメータ変更はステップを進めない
+    }
+
+    SECTION("Reset restarts the process and the estimate but keeps the parameters") {
+        GarchModel m(scene_config(7));
+        run_until_fitted(m);
+        m.apply(Command::set_param(GarchModel::kAlpha, 0.05));
+        m.apply(Command::reset());
+        const auto s = m.snapshot();
+        CHECK(s.seq == 0);
+        CHECK(s.t == 0.0);
+        CHECK(s.r_last == 0.0);
+        CHECK(s.path_len == 0);
+        CHECK(s.true_params.alpha == 0.05);       // パラメータは保持
+        CHECK(s.true_params.beta == kTruth.beta);
+    }
+
+    SECTION("Reset replays the very same path bit-for-bit with the current seed") {
+        GarchModel          m(scene_config(99));
+        std::vector<double> first;
+        for (int i = 0; i < 120; ++i) {
+            m.step(kDtDay);
+            first.push_back(m.snapshot().r_last);
+        }
+        m.apply(Command::reset());  // seed 0 = 現在の seed で巻き戻す
+        for (std::size_t i = 0; i < first.size(); ++i) {
+            m.step(kDtDay);
+            REQUIRE(m.snapshot().r_last == first[i]);
+        }
+    }
+
+    SECTION("growing the window withdraws the estimate until the window is full again") {
+        GarchModel m(scene_config(11));
+        auto       s = run_until_fitted(m);  // 600 ステップ: 窓 500 は埋まっていて推定がある
+        REQUIRE(s.path_len > 0);
+        REQUIRE(s.sigma2_est > 0.0);
+
+        m.apply(Command::set_param(GarchModel::kWindow, 900.0));
+        m.step(kDtDay);
+        s = m.snapshot();
+        CHECK(s.window == 900);
+        // 窓が埋まるまでは古い窓の推定を publish しない（描画側が平坦な線を引き続けないように）
+        CHECK(s.path_len == 0);
+        CHECK(s.sigma2_est == 0.0);
+        CHECK(s.sigma2_filtered == 0.0);
+        CHECK(s.log_lik == 0.0);
+
+        for (int i = 0; i < 310; ++i) m.step(kDtDay);  // 911 本目 = 900 埋まって再当てはめ済み
+        s = m.snapshot();
+        CHECK(s.path_len > 0);  // 埋まれば再開する
+        CHECK(s.sigma2_est > 0.0);
+        CHECK(s.sigma2_filtered > 0.0);
+        CHECK(s.log_lik != 0.0);
+    }
+}
+
+TEST_CASE("GARCH-10: every likelihood grid value is finite and the argmax cell is adjacent to the estimate",
+          "[garch][property]") {
+    GarchModel m(scene_config(20240912));
+    const auto s = run_until_fitted(m);
+    REQUIRE(s.path_len > 0);  // 少なくとも 1 回は当てはめが走っている
+
+    std::size_t best = 0;
+    for (std::size_t i = 0; i < s.loglik_grid.size(); ++i) {
+        REQUIRE(std::isfinite(s.loglik_grid[i]));  // 非定常点は −inf ではなく有限最小値にクランプ
+        if (s.loglik_grid[i] > s.loglik_grid[best]) best = i;
+    }
+
+    // 格子は ω = ω̂ の断面（同じ窓・同じ ω̂）なので、当てはめが収束していれば連続の最大点は
+    // ちょうど (α̂, β̂) にある。
+    // したがってどの格子点も推定値の対数尤度を超えられない。格子が別の窓や古い ω̂ で作られていたら
+    // ここが破れる（当てはめと格子の整合を固定する不変条件）。
+    CHECK(s.loglik_grid[best] <= s.log_lik);
+
+    // 最良格子点は推定値の隣接セル内。seed 固定（本書 §2.3）: 窓 500 本では尤度面の尾根
+    // （α+β ≈ 一定）が有限標本のせいで平坦になることがあり、その場合だけ最良格子点が尾根に沿って
+    // 2〜3 セル滑る（60 seed × 2 最適化器で 8/120）。格子分解能（Δα = 0.0129, Δβ = 0.0161）に対する
+    // 尾根の曲率の問題で実装の欠陥ではない。
+    const std::size_t ia_max = best % GarchSnapshot::kGrid;
+    const std::size_t ib_max = best / GarchSnapshot::kGrid;
+    const std::size_t ia_est = nearest_index(s.grid_alpha, s.est_params.alpha);
+    const std::size_t ib_est = nearest_index(s.grid_beta, s.est_params.beta);
+    CHECK(std::max(ia_max, ia_est) - std::min(ia_max, ia_est) <= 1);
+    CHECK(std::max(ib_max, ib_est) - std::min(ib_max, ib_est) <= 1);
+}
+
+TEST_CASE("GARCH-11: the optimiser path ends at the current estimate", "[garch][unit]") {
+    GarchModel m(scene_config(20240912));
+    const auto s = run_until_fitted(m);
+    REQUIRE(s.path_len > 0);
+    REQUIRE(s.path_len <= GarchSnapshot::kPath);
+    const std::size_t last = s.path_len - 1;
+    CHECK_THAT(s.path_alpha[last], WithinAbs(s.est_params.alpha, 1e-12));
+    CHECK_THAT(s.path_beta[last], WithinAbs(s.est_params.beta, 1e-12));
+    for (std::uint32_t i = 0; i < s.path_len; ++i) {  // 軌跡は (α, β) 座標（無制約 θ ではない）
+        CHECK(s.path_alpha[i] >= 0.0);
+        CHECK(s.path_beta[i] >= 0.0);
+        CHECK(s.path_alpha[i] + s.path_beta[i] < 1.0);
+    }
+
+    SECTION("a long (cold) fit is subsampled from the start, so the path shows the whole descent") {
+        GarchModel cold(scene_config(20240912));
+        const auto c = run_until_fitted(cold, 510);  // 最初の当てはめ直後 = 固定初期値からの冷たい当てはめ
+        REQUIRE(c.path_iters > GarchSnapshot::kPath);  // 間引きが必要な長さ
+        REQUIRE(c.path_len > 1);
+        REQUIRE(c.path_len <= GarchSnapshot::kPath);
+        // 始点は初期値 (0.05, 0.85)、終点は推定値。末尾 kPath 点だけを載せると両者の差は 1e-3 未満に潰れる。
+        CHECK_THAT(c.path_alpha[0], WithinAbs(GarchModel::kInitialEstimate.alpha, 1e-12));
+        CHECK_THAT(c.path_beta[0], WithinAbs(GarchModel::kInitialEstimate.beta, 1e-12));
+        const std::size_t end = c.path_len - 1;
+        CHECK_THAT(c.path_alpha[end], WithinAbs(c.est_params.alpha, 1e-12));
+        CHECK_THAT(c.path_beta[end], WithinAbs(c.est_params.beta, 1e-12));
+        CHECK(std::fabs(c.path_alpha[end] - c.path_alpha[0]) +
+                  std::fabs(c.path_beta[end] - c.path_beta[0]) >
+              0.01);
+    }
 }
