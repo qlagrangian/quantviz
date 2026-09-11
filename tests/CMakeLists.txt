@@ -20,7 +20,15 @@ add_executable(quantviz_tests
   test_ewma.cpp
   test_streaming_model.cpp
   test_history.cpp
-  bench_spsc_ring.cpp)
+  bench_spsc_ring.cpp
+  # ---- M1
+  test_viz.cpp
+  test_black_scholes.cpp
+  bench_black_scholes.cpp
+  test_optim.cpp
+  test_garch.cpp
+  test_kalman.cpp
+  test_greeks.cpp)
 
 target_link_libraries(quantviz_tests PRIVATE
   quantviz::core quantviz::bridge quantviz::scenes quantviz::vizcore quantviz::warnings
