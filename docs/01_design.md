@@ -195,7 +195,7 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | `models/gbm.hpp` ✅ | GBM 厳密離散化 | `step(dt)→log return`, `spot()`, `set_mu/sigma`, `reset(seed)` | `spot > 0`。σ<0 は 0 にクランプ。`reset` は mu/sigma を保持 |
 | `stats/welford.hpp` ✅ | 逐次平均・分散 | `push`, `mean`, `variance`(n-1), `population_variance` | n<2 で分散 0。O(1) 更新 |
 | `stats/ewma.hpp` ✅ | EWMA 分散（平均ゼロ仮定） | `push`, `variance`, `volatility`, `set_lambda` | λ∈(0,1) にクランプ。初回は r² で初期化 |
-| `pricing/black_scholes.hpp` 🔜M1 | BS 価格・Greeks、ストライク配列版（SIMD） | `price(S,K,T,r,σ,type)`, `greeks(...)`, `price_strip(span<K>)` | put-call parity、境界条件、スカラ版 == 配列版 |
+| `pricing/black_scholes.hpp` ✅M1 | BS 価格・Greeks、ストライク配列版（SIMD） | `bs_price(S,K,T,r,σ,type)`, `bs_greeks(...)`, `bs_price_strip(S, span<K>, T, r, σ, type, span<out>)`, `norm_cdf` | put-call parity、境界条件、スカラ版 == 配列版（bit 一致。算術は `bs_price_block<Ops>` 1 本に集約し、FMA 縮約は `QUANTVIZ_BS_USE_FMA` で両経路同一） |
 | `stats/garch.hpp` 🔜M1 | GARCH(1,1) 尤度・フィルタ | `log_likelihood(ω,α,β, span<r>)`, `filter(...)` | α+β<1 の定常制約。σ²>0 |
 | `stats/optim.hpp` 🔜M1 | Nelder-Mead / BFGS | `minimize(f, x0, opts)→{x, f, iters, path}` | 反復履歴を返す（尤度面上の軌跡描画用） |
 | `math/mat.hpp` ✅M1 | 固定サイズ行列（`std::array`、ヒープなし） | `Mat<R,C>`, `transpose`, `inverse()`→`optional`（≤3×3 閉形式、`tol` は行列式スケールに対する相対値）, `is_symmetric`, `is_psd` | POD。NaN は全述語で拒否 |

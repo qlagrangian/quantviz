@@ -204,18 +204,18 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| BS-01 | 無裁定境界: max(S−Ke^{−rT},0) ≤ C ≤ S、max(Ke^{−rT}−S,0) ≤ P ≤ Ke^{−rT} | P | ⬜ |
-| BS-02 | プット・コール・パリティ C − P = S − Ke^{−rT}（相対 1e-12） | N | ⬜ |
-| BS-03 | 数表値: S=K=100, T=1, r=0.05, σ=0.2 → C=10.4506, P=5.5735（絶対 1e-4） | N | ⬜ |
-| BS-04 | σ→0 極限で C → max(S−Ke^{−rT},0) | N | ⬜ |
-| BS-05 | T→0 極限で C → max(S−K,0)、Γ は ATM で発散方向（有限 T で単調増大） | N | ⬜ |
-| BS-06 | Δ_call ∈ (0,1)、Δ_put = Δ_call − 1、Γ と ν は call/put で同一かつ > 0 | P | ⬜ |
-| BS-07 | 解析 Greeks（Δ Γ ν Θ ρ）が中心差分と一致（相対 1e-6） | N | ⬜ |
-| BS-08 | 単調性: C は S・σ・T で増加、K で減少 | P | ⬜ |
-| BS-09 | 一次同次性: C(λS, λK) = λ·C(S, K) | P | ⬜ |
-| BS-10 | `price_strip(span<K>)` の各要素がスカラ版と一致（相対 1e-15） | N | ⬜ |
-| BS-11 | ストリップ長が SIMD 幅の倍数でない場合（N=1, 7, 65）も端が正しい | U | ⬜ |
-| BS-12 | (= BENCH-03) N=1024 ストリップがスカラループより高速（目標 ≥ 1.2×、§9 の判断記録を参照。当初の ≥ 2× は厳密一致 BS-10 と両立しないため改定） | B | ⬜ |
+| BS-01 | 無裁定境界: max(S−Ke^{−rT},0) ≤ C ≤ S、max(Ke^{−rT}−S,0) ≤ P ≤ Ke^{−rT} | P | ✅ |
+| BS-02 | プット・コール・パリティ C − P = S − Ke^{−rT}（相対 1e-12） | N | ✅ |
+| BS-03 | 数表値: S=K=100, T=1, r=0.05, σ=0.2 → C=10.4506, P=5.5735（絶対 1e-4） | N | ✅ |
+| BS-04 | σ→0 極限で C → max(S−Ke^{−rT},0)。退化ブランチ（T≤0 / σ≤0 / K≤0 / S≤0 / σ=NaN）も有限値を返し、0 は +0.0 で返す。S = Ke^{−rT} ちょうどでは OTM 側（Δ=0）に倒す | N | ✅ |
+| BS-05 | T→0 極限で C → max(S−K,0)、Γ は ATM で発散方向（有限 T で単調増大） | N | ✅ |
+| BS-06 | Δ_call ∈ (0,1)、Δ_put = Δ_call − 1、Γ と ν は call/put で同一かつ > 0 | P | ✅ |
+| BS-07 | 解析 Greeks（Δ Γ ν Θ ρ）が中心差分と一致（相対 1e-6） | N | ✅ |
+| BS-08 | 単調性: C は S・σ・T で増加、K で減少 | P | ✅ |
+| BS-09 | 一次同次性: C(λS, λK) = λ·C(S, K) | P | ✅ |
+| BS-10 | `price_strip(span<K>)` の各要素がスカラ版と一致（相対 1e-15） | N | ✅ |
+| BS-11 | ストリップ長が SIMD 幅の倍数でない場合（N=1, 7, 65）も端が正しい | U | ✅ |
+| BS-12 | (= BENCH-03) N=1024 ストリップがスカラループより高速（目標 ≥ 1.2×、§9 の判断記録を参照。当初の ≥ 2× は厳密一致 BS-10 と両立しないため改定） | B | ✅ |
 
 ### 4.3 GREEKS — `scenes/greeks_model.hpp`
 
@@ -484,7 +484,7 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 |---|---|---|---|---|
 | BENCH-01 | SpscRing push+pop（Snapshot 72 B） | < 20 ns | M0 | ✅ 4.4 ns |
 | BENCH-02 | StreamingModel step+snapshot | < 100 ns | M0 | ✅ 39 ns |
-| BENCH-03 | BS ストリップ SIMD vs スカラ（N=1024、厳密版: BS-10 で bit 一致） | ≥ 1.2×（改定） | M1 | ⬜ |
+| BENCH-03 | BS ストリップ SIMD vs スカラ（N=1024、厳密版: BS-10 で bit 一致） | ≥ 1.2×（改定） | M1 | ✅ 1.19〜1.28×（GCC 15, SSE2〜AVX-512） |
 | BENCH-04 | サーフェス 200×200 の z・法線更新 | < 2 ms | M2 | ⬜ |
 | BENCH-05 | マッチングエンジン 1e6 注文/秒（dropped 0） | ≥ 1e6/s | M3 | ⬜ |
 | BENCH-06 | AAD 全 Greeks / 価格 1 回 | ≤ 5× | M5 | ⬜ |
