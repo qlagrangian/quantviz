@@ -221,11 +221,11 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| GREEKS-01 | Model 契約充足、Snapshot は POD（固定 N ストライク配列 + 固定格子） | K | ⬜ |
-| GREEKS-02 | ストライク配列は昇順・等間隔、Snapshot 全要素が有限 | P | ⬜ |
-| GREEKS-03 | SetParam(σ) は次ステップの Greeks に反映、seq は進まない | U | ⬜ |
-| GREEKS-04 | Γ の最大ストライクは S に最も近いストライク（±1 グリッド） | P | ⬜ |
-| GREEKS-05 | 同 seed の素の Gbm と S が一致（dual-run） | D | ⬜ |
+| GREEKS-01 | Model 契約充足、Snapshot は POD（固定 N ストライク配列 + 固定格子） | K | ✅ |
+| GREEKS-02 | ストライク配列は昇順・等間隔、Snapshot 全要素が有限 | P | ✅ |
+| GREEKS-03 | SetParam(σ) は次ステップの Greeks に反映、seq は進まない | U | ✅ |
+| GREEKS-04 | Γ の最大ストライクは S に最も近いストライク（±1 グリッド） | P | ✅ |
+| GREEKS-05 | 同 seed の素の Gbm と S が一致（dual-run） | D | ✅ |
 
 ### 4.4 OPTIM — `core/stats/optim.hpp`
 

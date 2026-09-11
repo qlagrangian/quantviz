@@ -227,7 +227,7 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | シーン | Model | Snapshot の主内容 | Param |
 |---|---|---|---|
 | Streaming ✅ | `StreamingModel` | t, spot, log_return, Welford 平均/分散, EWMA 分散, μ/σ 真値, seq | mu, sigma, ewma_lambda |
-| Greeks 🔜M1 | `GreeksModel` | S, グリークス配列（ストライク軸 固定 N）, サーフェス格子（S×T 固定） | S, r, σ, T |
+| Greeks ✅M1 | `GreeksModel` | S（GBM, 経路ボラは固定）, 64 ストライクの price/Δ/Γ/ν/Θ/ρ（`bs_price_strip` の SIMD 経路を本番使用）, Γ(S,T) 48×32 格子（r/σ/T が変わった時だけ再計算）, 真値 r/σ/T, seq — 16.5 KB（M1 の例外、SnapCap 256） | スポットショック（×倍率, 非正・非有限は無視）, r, 価格ボラ σ, T, ストライク幅 |
 | Garch 🔜M1 | `GarchModel` | σ_t 推定, 真値, 尤度面（α×β 固定格子）, 最適化軌跡（最新 K 点） | ω, α, β（真値）, optimizer |
 | Kalman ✅M1 | `KalmanPairModel` | x, y（y = β_t x + ε）, β 真値, β̂, β 分散, スプレッド（事後残差）, イノベーション（事前残差）, skipped（縮退観測のスキップ数）, seq — 96 B | 観測ノイズ, 状態ノイズ, 真の β（β_t は κ=0.002 で真値へ平均回帰するランダムウォーク。フィルタは F=1 を仮定する意図的な軽い誤特定） |
 | Fdm 🔜M2 | `FdmAmericanModel` | V(S) の現在ステップ, 行使境界, 残り反復数 | K, r, σ, q, グリッド |
