@@ -199,7 +199,7 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 | VIZ-02 | シーン選択で Runner と Panel の対が生成され、前のシーンの Runner は `stop()` される（`running()` false） | U | ✅ |
 | VIZ-03 | 共通 Control の状態（speed / paused）は Command 生成関数の純関数として検査できる（ImGui 非依存部） | U | ✅ |
 | VIZ-04 | 実 Runner を持つ `RunnerScene` を `select` で切り替えると、前シーンの計算スレッドが join され `running()` が false になる | C | ✅ |
-| VIZ-05 | `RateMeter`（受信レートの 0.25 s 窓 + EMA）は定常入力で真値に収束し、最初の窓が閉じるまでは 0、`reset` で 0 に戻る | U | ⬜ |
+| VIZ-05 | `RateMeter`（受信レートの 0.25 s 窓 + EMA）は定常入力で真値に収束し、最初の窓が閉じるまでは 0、`reset` で 0 に戻る | U | ✅ |
 
 ### 4.2 BS — `core/pricing/black_scholes.hpp`
 

@@ -63,7 +63,7 @@
 | M | テーマ | 主な成果物 | 核となる C++ の学び | 核となる理論の学び | 状態 |
 |---|---|---|---|---|---|
 | **M0** | 骨組み・Streaming | SpscRing, SimClock, Runner, Gbm, Welford, EWMA, StreamingModel, viewer 3 パネル, CI | ロックフリー SPSC、concept、jthread、POD 境界 | GBM 厳密解、逐次統計、EWMA の窓 | ✅ 完了 |
-| **M1** | 2D 理論パネル | Black–Scholes + Greeks（SIMD）, GARCH(1,1) MLE, Kalman ヘッジ比率, 共通 Control, シーン切替 | SIMD、固定サイズ行列テンプレート、最適化器の自作 | Γ の尖り、尤度面の谷、フィルタの追従 | ⬜ |
+| **M1** | 2D 理論パネル | Black–Scholes + Greeks（SIMD）, GARCH(1,1) MLE, Kalman ヘッジ比率, 共通 Control, シーン切替 | SIMD、固定サイズ行列テンプレート、最適化器の自作 | Γ の尖り、尤度面の谷、フィルタの追従 | ✅ 完了 |
 | **M2** | 3D サーフェス・FDM | OpenGL サーフェス描画（自作）, ボラ面, Thomas 法, Crank–Nicolson + PSOR, 行使境界, triple buffer | GL パイプライン、連続メモリ、三重対角 | American の早期行使境界、後ろ向き反復 | ⬜ |
 | **M3** | マイクロストラクチャ | 板 + マッチングエンジン, Hawkes 生成・推定, 板深度ラダー, 価格×時間ヒートマップ | intrusive list、カスタムアロケータ、O(n) 再帰 | 価格時間優先、自己励起、板の崩れ | ⬜ |
 | **M4** | 動的処理 | LSM, Almgren–Chriss, Merton HJB, パス束・執行軌道・価値関数面 | パス並列、DP のメモリ設計 | 最適停止、執行のリスク回避、HJB | ⬜ |
@@ -107,7 +107,10 @@ M2 と M3 は独立に進められる。M4 は M2（FDM が LSM の参照解）�
 
 ---
 
-### M1 — 2D 理論パネル（Greeks / GARCH / Kalman）
+### M1 — 2D 理論パネル（Greeks / GARCH / Kalman）✅
+
+**実績（完了時点）** 4 シーン（Streaming / Greeks / GARCH / Kalman pair）を `SceneRegistry` + メニューバーで切替。テスト 108 ケース（M0 の 59 + 49）、ASan/UBSan/TSan Green、`-Werror` を GCC 15 で確認。計画からの主な逸脱: BENCH-03 の目標を ≥ 1.2× に改定（`03_tdd_spec.md` §9.1、厳密一致を優先）、Snapshot サイズ上限の例外（Greeks 16.5 KB、GARCH 9.8 KB、`SnapCap` 256 — M2 の triple buffer で解消予定）、Kalman の β_t は平均回帰付きランダムウォーク（フィルタは F=1 のまま、意図的な軽い誤特定）。並列実装のために各タスクを隔離 worktree で進め、仕様レビューと品質レビューを 2 段で通した（`docs/superpowers/plans/2026-09-12-m1-2d-panels.md`）。
+
 
 **目的** ImPlot だけで完結する 3 シーンを追加し、「シーンを増やす手順」を確立する。
 

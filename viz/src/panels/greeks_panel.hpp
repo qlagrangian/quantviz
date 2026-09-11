@@ -14,6 +14,7 @@
 #include "quantviz/bridge/runner.hpp"
 #include "quantviz/scenes/greeks_model.hpp"
 #include "quantviz/viz/clock_controls.hpp"
+#include "quantviz/viz/rate_meter.hpp"
 #include "quantviz/viz/scene_registry.hpp"
 
 namespace quantviz::viz {
@@ -40,10 +41,11 @@ private:
     std::size_t atm_index() const noexcept;
 
     Snap          last_{};
-    std::uint64_t received_   = 0;
-    double        rate_ema_   = 0.0;  ///< 受信 Snapshot/秒（表示用）
-    double        last_wall_  = 0.0;
-    std::uint64_t last_count_ = 0;
+    std::uint64_t received_ = 0;
+    RateMeter     rate_;  ///< 受信 Snapshot/秒（表示用）
+    // 他の 3 パネルが持つ `prev_seq_`（Reset をまたぐ古い Snapshot の検出）はここには要らない:
+    // このシーンは History を持たず、毎フレーム最新の 1 枚だけを描くので、巻き戻りで捨てる
+    // 蓄積状態がそもそも無い（古い Snapshot が 1 枚描かれた次のフレームには新しい 1 枚に入れ替わる）。
 
     /// ImPlot のヒートマップは row-major で「row 0 を上端」に描く。Snapshot は [iS][iT] なので、
     /// 表示用に [iT 降順][iS 昇順] へ転置したコピーを毎フレーム作る（48x32 = 1536 要素）。

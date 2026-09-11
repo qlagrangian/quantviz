@@ -68,7 +68,7 @@ struct GarchSnapshot {
     std::array<double, kPath> path_beta{};
 
     std::uint32_t path_len   = 0;  ///< 軌跡の有効点数（0 = まだ当てはめていない）
-    std::uint32_t path_iters = 0;  ///< 直近の当てはめの反復数（間引く前の軌跡の点数）
+    std::uint32_t path_iters = 0;  ///< 直近の当てはめの軌跡の点数（間引く前。反復数ではない）
     std::uint32_t window     = 0;  ///< ローリング窓長（本）
     std::uint8_t  optimizer  = 0;  ///< 0 = Nelder–Mead, 1 = BFGS
     std::uint64_t seq        = 0;  ///< ステップ通番（0 = 未ステップ／Reset 直後）
@@ -216,8 +216,8 @@ public:
         r_last_          = 0.0;
         sigma2_next_     = core::garch_unconditional_variance(truth_);
         sigma2_now_      = sigma2_next_;
-        head_   = 0;
-        filled_ = 0;
+        head_            = 0;
+        filled_          = 0;
         clear_estimate();  // 窓が埋まるまでは推定を出さない（描画側は 0 / path_len == 0 を見る）
         seq_ = 0;
     }

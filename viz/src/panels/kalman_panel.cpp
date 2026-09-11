@@ -1,6 +1,5 @@
 #include "panels/kalman_panel.hpp"
 
-#include <chrono>
 #include <cmath>
 #include <memory>
 #include <utility>
@@ -9,18 +8,13 @@
 #include <implot.h>
 
 #include "panels/clock_panel.hpp"
+#include "panels/panel_common.hpp"
 
 namespace quantviz::viz {
 
 namespace {
 
-constexpr double kTradingDays = 252.0;
-constexpr double kDt          = 1.0 / kTradingDays;  // 1 ステップ = 1 取引日
-
-double now_seconds() {
-    using namespace std::chrono;
-    return duration<double>(steady_clock::now().time_since_epoch()).count();
-}
+constexpr double kDt = 1.0 / kTradingDays;  // 1 ステップ = 1 取引日
 
 }  // namespace
 
@@ -42,13 +36,14 @@ void KalmanPanel::draw(Runner& runner) {
 void KalmanPanel::ingest(Runner& runner) {
     scenes::KalmanPairSnapshot s;
     while (runner.poll(s)) {
+        // Reset の時点でリングに積まれていた Snapshot は「古い seq」を持ったまま到着し、
+        // 巻き戻った 0 日目の点より先に描かれてしまう。seq が進まなかった＝巻き戻ったので、
+        // それまでに溜めた History を捨てる（clear_history() は prev_seq_ に触らない。
+        // 触ると古い方が残ってしまう）。last_ を差し替える前に呼ぶ。
+        if (s.seq != 0 && s.seq <= prev_seq_) clear_history();
         last_ = s;
         ++received_;
         if (s.seq == 0) continue;  // Reset 直後の空スナップショットは描かない
-        // Reset の時点でリングに積まれていた Snapshot は「古い seq」を持ったまま到着し、
-        // 巻き戻った 0 日目の点より先に描かれてしまう。seq が進まなかった＝巻き戻ったので捨てる。
-        // （Reset ボタンの clear_history() は prev_seq_ に触らない。触ると古い方が残ってしまう）
-        if (s.seq <= prev_seq_) clear_history();
         prev_seq_ = s.seq;
 
         const double days = s.t * kTradingDays;
@@ -62,30 +57,17 @@ void KalmanPanel::ingest(Runner& runner) {
         spread_.push(days, s.spread);
     }
 
-    // 受信レート（1 秒 EMA）
-    const double t = now_seconds();
-    if (last_wall_ == 0.0) {
-        last_wall_  = t;
-        last_count_ = received_;
-    } else if (t - last_wall_ >= 0.25) {
-        const double inst = static_cast<double>(received_ - last_count_) / (t - last_wall_);
-        rate_ema_         = rate_ema_ == 0.0 ? inst : 0.8 * rate_ema_ + 0.2 * inst;
-        last_wall_        = t;
-        last_count_       = received_;
-    }
+    rate_.sample(received_, now_seconds());
 }
 
 // ---------------------------------------------------------------- Prices
 void KalmanPanel::draw_prices() {
     ImGui::SetNextWindowSize(ImVec2(760, 230), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(ImVec2(10, 32), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(10, kPanelTop), ImGuiCond_FirstUseEver);
     ImGui::Begin("Prices - cointegrated pair y = beta_t x + eps");
     if (ImPlot::BeginPlot("##prices", ImVec2(-1, -1))) {
         ImPlot::SetupAxes("t (trading days)", "price", ImPlotAxisFlags_None, ImPlotAxisFlags_AutoFit);
-        if (follow_ && !px_x_.empty()) {
-            const double x1 = px_x_.latest_x();
-            ImPlot::SetupAxisLimits(ImAxis_X1, x1 - window_days_, x1, ImPlotCond_Always);
-        }
+        setup_follow_axis(px_x_, follow_, window_days_);
         ImPlot::PlotLine("x", px_x_.xs(), px_x_.ys(), px_x_.count(), 0, px_x_.offset());
         ImPlot::PlotLine("y", px_y_.xs(), px_y_.ys(), px_y_.count(), 0, px_y_.offset());
         ImPlot::EndPlot();
@@ -100,10 +82,7 @@ void KalmanPanel::draw_hedge_ratio() {
     ImGui::Begin("Hedge ratio - Kalman beta with a +/-2 sigma band");
     if (ImPlot::BeginPlot("##beta", ImVec2(-1, -1))) {
         ImPlot::SetupAxes("t (trading days)", "beta", ImPlotAxisFlags_None, ImPlotAxisFlags_AutoFit);
-        if (follow_ && !beta_hat_.empty()) {
-            const double x1 = beta_hat_.latest_x();
-            ImPlot::SetupAxisLimits(ImAxis_X1, x1 - window_days_, x1, ImPlotCond_Always);
-        }
+        setup_follow_axis(beta_hat_, follow_, window_days_);
         // 帯は lo/hi を同じ時刻で push しているので、xs/count/offset は lo のものを共用できる。
         // ImPlot 0.16 の PlotShaded は PlotLine と違って count <= 1 を弾かない
         // （RendererShaded の Prims = count − 1 が unsigned に落ちて巨大な予約になり落ちる）。
@@ -129,10 +108,7 @@ void KalmanPanel::draw_spread() {
     ImGui::Begin("Spread - y - beta_hat x (stationary if the pair is cointegrated)");
     if (ImPlot::BeginPlot("##spread", ImVec2(-1, -1))) {
         ImPlot::SetupAxes("t (trading days)", "spread", ImPlotAxisFlags_None, ImPlotAxisFlags_AutoFit);
-        if (follow_ && !spread_.empty()) {
-            const double x1 = spread_.latest_x();
-            ImPlot::SetupAxisLimits(ImAxis_X1, x1 - window_days_, x1, ImPlotCond_Always);
-        }
+        setup_follow_axis(spread_, follow_, window_days_);
         ImPlot::PlotLine("spread", spread_.xs(), spread_.ys(), spread_.count(), 0, spread_.offset());
         const double zero = 0.0;
         ImPlot::PlotInfLines("##zero", &zero, 1, ImPlotInfLinesFlags_Horizontal);
@@ -147,7 +123,7 @@ void KalmanPanel::draw_controls(Runner& runner) {
     using scenes::KalmanPairModel;
 
     ImGui::SetNextWindowSize(ImVec2(420, 690), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(ImVec2(780, 32), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(780, kPanelTop), ImGuiCond_FirstUseEver);
     ImGui::Begin("Control");
 
     ImGui::SeparatorText("Model parameters (applied from the next step)");
@@ -178,7 +154,7 @@ void KalmanPanel::draw_controls(Runner& runner) {
     ImGui::Text("spread         %+.5f", last_.spread);
     ImGui::Text("innovation     %+.5f", last_.innovation);
     ImGui::Text("skipped upd.   %u", last_.skipped);  // 0 でなければ R か x が壊れている
-    draw_runner_telemetry(runner, last_.seq, rate_ema_);
+    draw_runner_telemetry(runner, last_.seq, rate_.per_second());
 
     ImGui::End();
 }

@@ -13,6 +13,7 @@
 #include "quantviz/scenes/garch_model.hpp"
 #include "quantviz/viz/clock_controls.hpp"
 #include "quantviz/viz/history.hpp"
+#include "quantviz/viz/rate_meter.hpp"
 #include "quantviz/viz/scene_registry.hpp"
 
 namespace quantviz::viz {
@@ -44,10 +45,9 @@ private:
     History<kHistory> sigma_est_;       ///< 推定パラメータで窓をフィルタした σ_t
 
     scenes::GarchSnapshot last_{};
-    std::uint64_t         received_   = 0;
-    double                rate_ema_   = 0.0;  ///< 受信 Snapshot/秒（表示用）
-    double                last_wall_  = 0.0;
-    std::uint64_t         last_count_ = 0;
+    std::uint64_t         prev_seq_ = 0;  ///< Reset をまたぐ古い Snapshot の検出用
+    std::uint64_t         received_ = 0;
+    RateMeter             rate_;  ///< 受信 Snapshot/秒（表示用）
 
     /// heatmap 用に行（β 軸）を反転してクランプした格子。ImPlot は行 0 を上端に描くため。
     std::array<double, kGrid * kGrid> heat_{};

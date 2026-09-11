@@ -12,3 +12,4 @@ vcpkg_installed/
 *:Zone.Identifier
 build-*/
 imgui.ini
+*.whl

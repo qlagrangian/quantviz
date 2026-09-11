@@ -1,7 +1,6 @@
 #include "panels/garch_panel.hpp"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <limits>
 #include <memory>
@@ -10,20 +9,15 @@
 #include <implot.h>
 
 #include "panels/clock_panel.hpp"
+#include "panels/panel_common.hpp"
 
 namespace quantviz::viz {
 
 namespace {
 
-constexpr double kTradingDays = 252.0;
 /// heatmap の色域。最大値からこれだけ下までを色で塗り分け、それ以下は下端色に潰す。
 /// 対数尤度は非定常側で数千下がるので、そのまま色域にすると尾根が 1 色に潰れて見えない。
 constexpr double kLogLikSpan = 50.0;
-
-double now_seconds() {
-    using namespace std::chrono;
-    return duration<double>(steady_clock::now().time_since_epoch()).count();
-}
 
 /// 分散（ステップ = 1 営業日）→ 年率ボラ（%）。
 double annualised_pct(double sigma2, double dt) {
@@ -74,9 +68,15 @@ void GarchPanel::draw(Runner& runner) {
 void GarchPanel::ingest(Runner& runner) {
     scenes::GarchSnapshot s;
     while (runner.poll(s)) {
+        // Reset の時点でリングに積まれていた Snapshot は「古い seq」を持ったまま到着し、
+        // 巻き戻った 0 日目の点より先に描かれてしまう。seq が進まなかった＝巻き戻ったので、
+        // それまでに溜めた History を捨てる（clear_history() は prev_seq_ に触らない。
+        // 触ると古い方が残ってしまう）。last_ を差し替える前に呼ぶ。
+        if (s.seq != 0 && s.seq <= prev_seq_) clear_history();
         last_ = s;
         ++received_;
         if (s.seq == 0) continue;  // Reset 直後の空スナップショットは描かない
+        prev_seq_         = s.seq;
         const double days = s.t * kTradingDays;
         sigma_true_.push(days, annualised_pct(s.sigma2_true, dt_));
         // フィルタ 2 本は窓が埋まるまで 0（＝まだ推定していない）。0 は描かない。
@@ -84,32 +84,18 @@ void GarchPanel::ingest(Runner& runner) {
         if (s.sigma2_est > 0.0) sigma_est_.push(days, annualised_pct(s.sigma2_est, dt_));
     }
 
-    // 受信レート（1 秒 EMA）
-    const double t = now_seconds();
-    if (last_wall_ == 0.0) {
-        last_wall_  = t;
-        last_count_ = received_;
-    } else if (t - last_wall_ >= 0.25) {
-        const double inst = static_cast<double>(received_ - last_count_) / (t - last_wall_);
-        rate_ema_         = rate_ema_ == 0.0 ? inst : 0.8 * rate_ema_ + 0.2 * inst;
-        last_wall_        = t;
-        last_count_       = received_;
-    }
+    rate_.sample(received_, now_seconds());
 }
 
 // ---------------------------------------------------------------- Volatility
 void GarchPanel::draw_volatility() {
     ImGui::SetNextWindowSize(ImVec2(760, 360), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(ImVec2(10, 32), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(10, kPanelTop), ImGuiCond_FirstUseEver);
     ImGui::Begin("Volatility - annualised sigma_t = sqrt(252 * sigma2_t)");
     if (ImPlot::BeginPlot("##vol", ImVec2(-1, -1))) {
         ImPlot::SetupAxes("t (trading days)", "sigma (% p.a.)", ImPlotAxisFlags_None,
                           ImPlotAxisFlags_AutoFit);
-        if (follow_ && !sigma_true_.empty()) {
-            const double x1 = sigma_true_.latest_x();
-            ImPlot::SetupAxisLimits(ImAxis_X1, x1 - static_cast<double>(window_days_), x1,
-                                    ImPlotCond_Always);
-        }
+        setup_follow_axis(sigma_true_, follow_, window_days_);
         if (sigma_true_.count() > 1)
             ImPlot::PlotLine("true sigma", sigma_true_.xs(), sigma_true_.ys(), sigma_true_.count(), 0,
                              sigma_true_.offset());
@@ -194,7 +180,7 @@ void GarchPanel::draw_controls(Runner& runner) {
     using scenes::GarchModel;
 
     ImGui::SetNextWindowSize(ImVec2(420, 698), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(ImVec2(780, 32), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(780, kPanelTop), ImGuiCond_FirstUseEver);
     ImGui::Begin("Control");
 
     ImGui::SeparatorText("True parameters (applied from the next step)");
@@ -220,7 +206,7 @@ void GarchPanel::draw_controls(Runner& runner) {
                          static_cast<int>(GarchModel::kMaxWindow)))
         runner.send(Command::set_param(GarchModel::kWindow, static_cast<double>(window_)));
     // 軌跡は先頭から間引いて最大 kPath 点に落としてある（降下の全体が見えるように）。
-    ImGui::TextDisabled("path = %u of %u optimiser iterations (subsampled)", last_.path_len,
+    ImGui::TextDisabled("path = %u of %u optimiser path points (subsampled)", last_.path_len,
                         last_.path_iters);
 
     draw_clock_controls(clock_, runner, [this] { clear_history(); });
@@ -232,7 +218,7 @@ void GarchPanel::draw_controls(Runner& runner) {
 
     ImGui::SeparatorText("Telemetry");
     // 共通の行（seq / snapshots per sec / ring / steps / frame）は clock_panel.hpp、この下はシーン固有。
-    draw_runner_telemetry(runner, last_.seq, rate_ema_);
+    draw_runner_telemetry(runner, last_.seq, rate_.per_second());
     ImGui::Text("t              %.2f y  (%.0f days)", last_.t, last_.t * kTradingDays);
     ImGui::Text("r_last         %+.5f", last_.r_last);
     ImGui::Text("sigma_t true   %.2f %% p.a.", annualised_pct(last_.sigma2_true, dt_));
@@ -285,6 +271,7 @@ void GarchPanel::clear_history() {
     last_.est_params      = scenes::GarchModel::kInitialEstimate;
     last_.log_lik         = 0.0;
     last_.path_len        = 0;
+    last_.path_iters      = 0;  // これを残すと Reset 直後の 1 フレームだけ "0 of 114" と出る
 }
 
 }  // namespace quantviz::viz

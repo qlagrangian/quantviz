@@ -41,7 +41,7 @@ struct KalmanPairSnapshot {
     double        obs_noise   = 0.0;  ///< 現在の観測ノイズ σ_ε（参照）
     double        state_noise = 0.0;  ///< 現在の状態ノイズ σ_β（参照）
     std::uint64_t seq         = 0;    ///< ステップ通番（0 = 未ステップ／Reset 直後）
-    std::uint32_t skipped     = 0;    ///< S が特異で観測更新を捨てた回数（0 でない = 入力が壊れている）
+    std::uint32_t skipped     = 0;  ///< 観測更新を捨てた回数（S が特異／イノベーション非有限。0 が正常）
 };
 static_assert(std::is_trivially_copyable_v<KalmanPairSnapshot>);
 static_assert(std::is_default_constructible_v<KalmanPairSnapshot>);
@@ -94,12 +94,9 @@ public:
 
         kf_.predict(core::Mat<1, 1>::identity(), q);
 
-        // core::Kalman::update は S = H P⁻ Hᵀ + R が特異（非有限 または 0）なら状態も共分散も
-        // 変えずに戻る。1×1 では S はスカラなので、同じ判定をここでも行って回数を数える
-        // （Snapshot の `skipped` が「パラメータが壊れている」ことの唯一の可視化になる）。
-        const double s_scalar = x_ * kf_.cov()(0, 0) * x_ + r(0, 0);
-        if (!(std::isfinite(s_scalar) && s_scalar != 0.0)) ++skipped_updates_;
-
+        // 捨てた観測更新の回数はフィルタ本体が数えている（`core::Kalman::skipped_updates()`）。
+        // ここで数え直さない: コア側は S = H P⁻ Hᵀ + R が特異な場合に加えて、イノベーションが
+        // 非有限（z か状態が NaN/inf）な場合も捨てるので、手書きの判定では取りこぼす。
         innovation_ = kf_.update(h, z, r)(0, 0);
         spread_     = y_ - kf_.state()(0, 0) * x_;  // 事後残差（トレード対象のスプレッド）
 
@@ -120,7 +117,7 @@ public:
         s.obs_noise   = cfg_.obs_noise;
         s.state_noise = cfg_.state_noise;
         s.seq         = seq_;
-        s.skipped     = skipped_updates_;
+        s.skipped     = static_cast<std::uint32_t>(kf_.skipped_updates());
         return s;
     }
 
@@ -148,10 +145,10 @@ public:
         beta_       = cfg_.beta_center;
         y_          = cfg_.beta_center * cfg_.x0;
         t_          = 0.0;
-        spread_          = 0.0;
-        innovation_      = 0.0;
-        seq_             = 0;
-        skipped_updates_ = 0;
+        spread_     = 0.0;
+        innovation_ = 0.0;
+        seq_        = 0;
+        // `skipped` のカウンタは kf_.reset() が 0 に戻す（フィルタが持つ唯一の所有者）。
     }
 
     /// R = 0 も R = NaN/∞ も S = x²P⁻ + R を特異にし、`core::Kalman::update` が観測更新を
@@ -201,10 +198,9 @@ private:
     double        beta_       = 0.0;
     double        y_          = 0.0;
     double        t_          = 0.0;
-    double        spread_          = 0.0;
-    double        innovation_      = 0.0;
-    std::uint64_t seq_             = 0;
-    std::uint32_t skipped_updates_ = 0;
+    double        spread_     = 0.0;
+    double        innovation_ = 0.0;
+    std::uint64_t seq_        = 0;
 };
 
 static_assert(bridge::Model<KalmanPairModel>, "KalmanPairModel must satisfy the Model contract");

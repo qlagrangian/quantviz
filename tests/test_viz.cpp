@@ -6,6 +6,7 @@
 // の 2 点だけ。VIZ-01〜03 は偽シーンだけを使う純ロジック、VIZ-04 だけが本物の Runner
 // （計算スレッド）を起動するので `[concurrency]`（TSan 対象）に分けてある。
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -17,6 +18,7 @@
 #include "quantviz/bridge/command.hpp"
 #include "quantviz/bridge/runner.hpp"
 #include "quantviz/viz/clock_controls.hpp"
+#include "quantviz/viz/rate_meter.hpp"
 #include "quantviz/viz/scene_registry.hpp"
 
 using quantviz::bridge::Command;
@@ -311,5 +313,73 @@ TEST_CASE("VIZ-03: the shared clock control state is a pure function producing t
         const Command r = quantviz::viz::reset();
         CHECK(r.type == CommandType::Reset);
         CHECK(r.seed == 0);  // 0 = 現在の seed で再生
+    }
+}
+
+// ====================================================================== VIZ-05
+TEST_CASE("VIZ-05: RateMeter converges to the true rate on a steady stream, reads 0 before the first "
+          "window closes, and reset() returns it to 0",
+          "[viz][unit]") {
+    using quantviz::viz::RateMeter;
+
+    // 壁時計は渡すだけ（RateMeter は時刻源を持たない）ので、合成時刻で決定的に検査できる。
+    // 0.125 s と 50 個/回はどちらも 2 冪なので、窓（0.25 s = 2 回ぶん）の瞬間値は
+    // 100 / 0.25 = 400 /s に厳密一致する（浮動小数の丸めが入らない）。
+    constexpr double        kStep    = 0.125;
+    constexpr double        kT0      = 1000.0;  // steady_clock の起点を模す（0 ではない）
+    constexpr std::uint64_t kPerStep = 50;      // 400 /s
+    constexpr double        kRate    = 400.0;
+
+    RateMeter m;
+    CHECK(m.per_second() == 0.0);
+
+    SECTION("the meter reads 0 until the first 0.25 s window closes, then reports the exact rate") {
+        m.sample(0, kT0);  // 最初の呼び出しは基準を latch するだけ
+        CHECK(m.per_second() == 0.0);
+
+        m.sample(kPerStep, kT0 + kStep);  // 0.125 s < 0.25 s: まだ窓が閉じない
+        CHECK(m.per_second() == 0.0);
+
+        m.sample(2 * kPerStep, kT0 + 2 * kStep);  // 0.25 s: 窓が閉じる
+        CHECK(m.per_second() == kRate);           // 最初の窓は EMA の初期値になる（そのまま瞬間値）
+    }
+
+    SECTION("a steady stream keeps the reading at the true rate") {
+        for (std::uint64_t k = 0; k <= 80; ++k)
+            m.sample(k * kPerStep, kT0 + static_cast<double>(k) * kStep);
+        CHECK_THAT(m.per_second(), Catch::Matchers::WithinAbs(kRate, 1e-9));
+    }
+
+    SECTION("after a rate change the EMA converges geometrically to the new rate") {
+        // 400 /s で latch したあと 100 /s に落とす。EMA は 1 窓ごとに誤差が 0.8 倍になるので、
+        // 40 窓後の誤差は 300 · 0.8^40 ≈ 3.9e-2、80 窓後は 300 · 0.8^80 ≈ 5.1e-6。
+        std::uint64_t total = 0;
+        double        t     = kT0;
+        for (std::uint64_t k = 0; k <= 20; ++k, total += kPerStep, t += kStep) m.sample(total, t);
+        REQUIRE_THAT(m.per_second(), Catch::Matchers::WithinAbs(kRate, 1e-9));
+
+        constexpr double kSlowRate = 100.0;  // 0.25 s の窓あたり 25 個 = 100 /s
+        for (int w = 0; w < 80; ++w) {       // 1 窓（0.25 s）ぶんをまとめて 1 回送る
+            total += 25;
+            t += 2 * kStep;
+            m.sample(total, t);
+        }
+        CHECK_THAT(m.per_second(), Catch::Matchers::WithinAbs(kSlowRate, 1e-4));
+    }
+
+    SECTION("reset() returns the reading to 0 and re-latches on the next sample") {
+        for (std::uint64_t k = 0; k <= 8; ++k)
+            m.sample(k * kPerStep, kT0 + static_cast<double>(k) * kStep);
+        REQUIRE(m.per_second() > 0.0);
+
+        m.reset();
+        CHECK(m.per_second() == 0.0);
+
+        // reset 後は「最初の呼び出し」からやり直す: 直前の総数（大きな値）との差で
+        // 跳ね上がらないこと。
+        m.sample(1'000'000, kT0 + 100.0);
+        CHECK(m.per_second() == 0.0);
+        m.sample(1'000'000 + 2 * kPerStep, kT0 + 100.0 + 2 * kStep);
+        CHECK(m.per_second() == kRate);
     }
 }

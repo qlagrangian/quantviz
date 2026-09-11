@@ -1,7 +1,6 @@
 #include "panels/greeks_panel.hpp"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <memory>
 #include <utility>
@@ -10,13 +9,13 @@
 #include <implot.h>
 
 #include "panels/clock_panel.hpp"
+#include "panels/panel_common.hpp"
 
 namespace quantviz::viz {
 
 namespace {
 
-constexpr double kTradingDays = 252.0;
-constexpr int    kStrikeCount = static_cast<int>(scenes::GreeksSnapshot::kStrikes);
+constexpr int kStrikeCount = static_cast<int>(scenes::GreeksSnapshot::kStrikes);
 
 // 表示用の単位換算。Snapshot は「1.0 あたり」で持つので、ここで実務単位に直す。こうすると
 // delta / vega / rho は O(1)、gamma / theta は O(0.01) にまとまり、2 軸できれいに分かれる。
@@ -25,11 +24,6 @@ constexpr double kRhoPerPercent   = 1.0 / 100.0;  ///< 金利 1 % = 0.01
 constexpr double kThetaPerDay     = 1.0 / 365.0;  ///< 1 日 = 1/365 年
 // 注意: theta の「1 日」は暦日（1/365 年）で、実務の見積りに合わせている。一方 Telemetry の `t` と
 // Streaming シーンの時間軸は取引日（1/252 年）。同じ「日」でも分母が違うので、両者を足し引きしないこと。
-
-double now_seconds() {
-    using namespace std::chrono;
-    return duration<double>(steady_clock::now().time_since_epoch()).count();
-}
 
 }  // namespace
 
@@ -56,19 +50,11 @@ void GreeksPanel::ingest(Runner& runner) {
         // むしろ Reset 直後の 1 枚を採らないと、再開までパネルが古い状態を映し続けてしまう。
         last_ = s;
         ++received_;
+        // 他の 3 パネルの `prev_seq_` ガード（seq が巻き戻ったら History を捨てる）に相当する
+        // 処理はここには無い: 描くのは常に最新の 1 枚だけで、Reset をまたいで溜まる状態が無い。
     }
 
-    // 受信レート（1 秒 EMA）
-    const double t = now_seconds();
-    if (last_wall_ == 0.0) {
-        last_wall_  = t;
-        last_count_ = received_;
-    } else if (t - last_wall_ >= 0.25) {
-        const double inst = static_cast<double>(received_ - last_count_) / (t - last_wall_);
-        rate_ema_         = rate_ema_ == 0.0 ? inst : 0.8 * rate_ema_ + 0.2 * inst;
-        last_wall_        = t;
-        last_count_       = received_;
-    }
+    rate_.sample(received_, now_seconds());
 }
 
 std::size_t GreeksPanel::atm_index() const noexcept {
@@ -85,7 +71,7 @@ std::size_t GreeksPanel::atm_index() const noexcept {
 // ---------------------------------------------------------------- Greeks vs K
 void GreeksPanel::draw_strip() {
     ImGui::SetNextWindowSize(ImVec2(760, 360), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(ImVec2(10, 32), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(10, kPanelTop), ImGuiCond_FirstUseEver);
     ImGui::Begin("Greeks vs K");
 
     if (received_ == 0) {
@@ -188,7 +174,7 @@ void GreeksPanel::draw_controls(Runner& runner) {
     using scenes::GreeksModel;
 
     ImGui::SetNextWindowSize(ImVec2(420, 690), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(ImVec2(780, 32), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(780, kPanelTop), ImGuiCond_FirstUseEver);
     ImGui::Begin("Control");
 
     ImGui::SeparatorText("Option parameters (applied from the next step)");
@@ -213,7 +199,7 @@ void GreeksPanel::draw_controls(Runner& runner) {
     draw_clock_controls(clock_, runner, [] {});
 
     ImGui::SeparatorText("Telemetry");
-    draw_runner_telemetry(runner, last_.seq, rate_ema_);
+    draw_runner_telemetry(runner, last_.seq, rate_.per_second());
     if (received_ == 0) {
         // 既定構築の Snapshot（全ゼロ）をシーン固有の行として出すと「spot 0」等の嘘になる。
         ImGui::TextDisabled("waiting for the first snapshot ...");

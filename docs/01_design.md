@@ -242,10 +242,12 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | `history.hpp`（vizcore） ✅ | 描画側の固定長循環履歴。ImPlot の `offset` 規約（満杯時 offset = 最古の index） |
 | `panels/streaming_panel.*` ✅ | Spot / Volatility / Control の 3 ウィンドウ |
 | `main.cpp` ✅ | GLFW + ImGui + ImPlot の起動・フレームループ・終了 |
-| `panels/<scene>_panel.*` 🔜 | シーンごとに 1 パネル。`draw(Runner<M>&)` の形を揃える |
+| `panels/{streaming,greeks,garch,kalman}_panel.*` ✅M1 | シーンごとに 1 パネル。`draw(Runner&)` + `make_<scene>_scene()`。共通部品は `panels/panel_common.hpp`（`now_seconds`, `kTradingDays`, `kPanelTop`, `setup_follow_axis`）と `viz/rate_meter.hpp`（受信レート EMA）。Reset 時は `prev_seq_` ガードでリング内の古い Snapshot を捨てる |
 | `gl/surface_renderer.*` 🔜M2 | グリッド → 三角形メッシュ → 法線 → 単純ライティング → カメラ。ImGui ウィンドウ内にテクスチャとして描く |
 | `clock_controls.hpp`（vizcore）✅M1 | 時計 UI の状態 `ClockControlState` と Command 生成の純関数（`toggle_pause`, `set_speed`, `step_once`, `reset`, `step_allowed`）。ImGui 非依存でテスト可能（VIZ-03） |
 | `panels/clock_panel.hpp` ✅M1 | 上記に ImGui を被せた共通ウィジェット `draw_clock_controls` と共通テレメトリ行 `draw_runner_telemetry`。全シーンの Control ウィンドウが使う |
+| `rate_meter.hpp`（vizcore）✅M1 | 受信 Snapshot レートの表示用メーター（0.25 s 窓 + 係数 0.2 の EMA）。時刻源を持たず壁時計を引数で受けるので単体テストできる（VIZ-05）。全パネルが 1 つずつ持つ |
+| `panels/panel_common.hpp` ✅M1 | パネル共通の小物: `now_seconds()`, `kTradingDays`, `kPanelTop`（メニューバー下の初期 y）, `setup_follow_axis()`（最新点に追従する X 軸） |
 | `scene_registry.hpp`（vizcore）✅M1 | `Scene`（Runner + Panel の型消去）, `RunnerScene<M, Panel, SnapCap>`（唯一の具象、デストラクタで join）, `SceneRegistry`（名前→生成関数。`select` は前シーンを `stop()` してから破棄し、新シーンを `start()`）。`main.cpp` はメニューバーで切り替えるだけ。生きているシーンは常に高々 1 つ |
 
 ---
