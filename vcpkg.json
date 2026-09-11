@@ -1,0 +1,11 @@
+{
+  "name": "quantviz",
+  "version-string": "0.1.0",
+  "description": "C++ financial-engineering lab: core numerics <-> real-time 2D/3D visualisation",
+  "dependencies": [
+    "glfw3",
+    { "name": "imgui", "features": ["glfw-binding", "opengl3-binding"] },
+    "implot",
+    "catch2"
+  ]
+}

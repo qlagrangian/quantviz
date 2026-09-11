@@ -1,0 +1,57 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  core-tests:
+    name: core + bridge + scenes tests (${{ matrix.os }}, ${{ matrix.build_type }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+        build_type: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lukka/get-cmake@latest
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DQUANTVIZ_BUILD_VIZ=OFF -DQUANTVIZ_WARNINGS_AS_ERRORS=ON
+      - name: Build
+        run: cmake --build build -j
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  sanitizers:
+    name: ASan + UBSan + TSan (ubuntu)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lukka/get-cmake@latest
+      - name: ASan/UBSan
+        run: |
+          cmake -S . -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DQUANTVIZ_BUILD_VIZ=OFF \
+                -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          cmake --build build-asan -j
+          ctest --test-dir build-asan --output-on-failure
+      - name: TSan
+        run: |
+          cmake -S . -B build-tsan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DQUANTVIZ_BUILD_VIZ=OFF \
+                -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+          cmake --build build-tsan -j
+          ctest --test-dir build-tsan --output-on-failure -L "" -R "RING|RUNNER"
+
+  viz-build:
+    name: viewer builds (ubuntu, FetchContent imgui/implot)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lukka/get-cmake@latest
+      - name: System deps
+        run: sudo apt-get update && sudo apt-get install -y libglfw3-dev libgl-dev
+      - name: Configure + build viewer
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DQUANTVIZ_BUILD_VIZ=ON -DQUANTVIZ_WARNINGS_AS_ERRORS=ON
+          cmake --build build -j --target quantviz_viz

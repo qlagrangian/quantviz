@@ -1,0 +1,12 @@
+build/
+out/
+.cache/
+compile_commands.json
+*.user
+.vs/
+.idea/
+.vscode/settings.json
+vcpkg_installed/
+
+# WSL / Windows download markers (NTFS alternate data streams)
+*:Zone.Identifier
