@@ -10,7 +10,10 @@ Usage (all window coordinates are client-area pixels of the viewer window):
   drive.py drag <x0> <y0> <x1> <y1>        press, move, release (e.g. to drag a slider)
   drive.py key <keysym> [n]                press a key (X keysym name, e.g. Return, Escape, a)
   drive.py sleep <seconds>
-  drive.py quit                            kill the viewer
+  drive.py quit                            kill the viewer started by `launch` (pid file), else every viewer
+
+Environment: QV_WID=0x<id> pins the window all commands act on (several agents, several viewers);
+QV_PID_FILE overrides the pid file used by launch/quit (default /tmp/quantviz_viz.pid).
 
 Gotchas learned on WSLg: the X root window is black (rootless XWayland) so capture the
 window id, never :0; the first click on an unfocused window only focuses it — click a
@@ -77,11 +80,15 @@ def _walk(w, out):
         _walk(c, out)
     if n.value: _X.XFree(kids)
 
-def find(needle="quantviz"):
+PID_FILE = os.environ.get("QV_PID_FILE", "/tmp/quantviz_viz.pid")
+
+def _all_named(needle="quantviz"):
     wins = []; _walk(_root, wins)
-    for w, width, height, name in wins:
-        if needle in name: return w, width, height, name
-    return None
+    return [(w, width, height, name) for w, width, height, name in wins if needle in name]
+
+def find(needle="quantviz"):
+    wins = _all_named(needle)
+    return wins[0] if wins else None
 
 def origin(w):
     rx, ry, ch = ctypes.c_int(), ctypes.c_int(), ctypes.c_ulong()
@@ -89,6 +96,10 @@ def origin(w):
     return rx.value, ry.value
 
 def _need():
+    wid = os.environ.get("QV_WID")           # pin a specific window when several viewers are running
+    if wid:
+        w = int(wid, 16); a = _Attrs(); _X.XGetWindowAttributes(_d, w, ctypes.byref(a))
+        return (w, a.width, a.height, "<QV_WID>")
     f = find()
     if not f: sys.exit("viewer window not found (is it running? try: drive.py launch)")
     return f
@@ -127,12 +138,16 @@ def shot(path):
 def launch(binary):
     env = dict(os.environ); env.pop("WAYLAND_DISPLAY", None); env.pop("XDG_RUNTIME_DIR", None)  # force GLFW onto X11
     log = open("/tmp/quantviz_viz.log", "w")
+    before = {w for w, *_ in _all_named()}
     p = subprocess.Popen([os.path.abspath(binary)], env=env, stdout=log, stderr=log, cwd="/tmp")  # cwd=/tmp: imgui.ini goes there
     for _ in range(100):
         time.sleep(0.1)
-        f = find()
-        if f:
-            time.sleep(0.5); print("pid=%d wid=0x%x %dx%d %r" % (p.pid, f[0], f[1], f[2], f[3])); return
+        new = [f for f in _all_named() if f[0] not in before]   # only windows that appeared after our launch
+        if new:
+            f = new[0]; time.sleep(0.5)
+            open(PID_FILE, "w").write("%d 0x%x\n" % (p.pid, f[0]))
+            print("pid=%d wid=0x%x %dx%d %r   (export QV_WID=0x%x to pin this window)" % (p.pid, f[0], f[1], f[2], f[3], f[0]))
+            return
     sys.exit("viewer window did not appear; see /tmp/quantviz_viz.log")
 
 def main(argv):
@@ -147,7 +162,11 @@ def main(argv):
     elif cmd == "drag": drag(int(a[0]), int(a[1]), int(a[2]), int(a[3]))
     elif cmd == "key": key(a[0], int(a[1]) if len(a) > 1 else 1)
     elif cmd == "sleep": time.sleep(float(a[0]))
-    elif cmd == "quit": subprocess.run(["pkill", "-x", "quantviz_viz"])
+    elif cmd == "quit":
+        try:
+            pid = int(open(PID_FILE).read().split()[0]); os.kill(pid, 15); os.remove(PID_FILE); print("killed pid", pid)
+        except (OSError, ValueError, IndexError):
+            subprocess.run(["pkill", "-x", "quantviz_viz"])   # fallback: no pid file → kill every viewer
     else: sys.exit(__doc__)
 
 if __name__ == "__main__":

@@ -35,6 +35,12 @@ python3 $D quit
 Telemetry to read off the Control window for the §5.3 checklist: `seq`, `snapshots/s`, `dropped`, `frame`.
 Pause → `Step` ×5 must raise `seq` by exactly 5; Resume must not burst.
 
+## Several viewers at once
+
+`launch` prints `wid=0x...` and writes `/tmp/quantviz_viz.pid`; `quit` kills only that pid. When another
+agent's viewer is on the same display, `export QV_WID=0x<your wid>` (and `QV_PID_FILE=/tmp/<you>.pid`
+before `launch`) so every command targets your window, never theirs.
+
 ## Gotchas
 
 - **Root capture is black.** WSLg's XWayland is rootless; always capture by window id (the script does).
