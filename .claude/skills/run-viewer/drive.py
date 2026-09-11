@@ -127,7 +127,7 @@ def shot(path):
 def launch(binary):
     env = dict(os.environ); env.pop("WAYLAND_DISPLAY", None); env.pop("XDG_RUNTIME_DIR", None)  # force GLFW onto X11
     log = open("/tmp/quantviz_viz.log", "w")
-    p = subprocess.Popen([binary], env=env, stdout=log, stderr=log, cwd="/tmp")   # cwd=/tmp: imgui.ini goes there
+    p = subprocess.Popen([os.path.abspath(binary)], env=env, stdout=log, stderr=log, cwd="/tmp")  # cwd=/tmp: imgui.ini goes there
     for _ in range(100):
         time.sleep(0.1)
         f = find()
