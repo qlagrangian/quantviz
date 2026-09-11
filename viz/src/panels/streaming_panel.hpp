@@ -5,10 +5,13 @@
 // Model には一切触らない（Snapshot の純関数 + Command の生成のみ）。
 
 #include <cstdint>
+#include <memory>
 
 #include "quantviz/bridge/runner.hpp"
 #include "quantviz/scenes/streaming_model.hpp"
+#include "quantviz/viz/clock_controls.hpp"
 #include "quantviz/viz/history.hpp"
+#include "quantviz/viz/scene_registry.hpp"
 
 namespace quantviz::viz {
 
@@ -43,13 +46,15 @@ private:
     std::uint64_t             last_count_  = 0;
 
     // UI 状態（ImGui のスライダーは float）
-    float mu_;
-    float sigma_;
-    float lambda_;
-    float speed_;
-    float window_days_ = 5.0f;
-    bool  paused_      = false;
-    bool  follow_      = true;
+    ClockControlState clock_{};  ///< speed / paused の共通 Control 状態
+    float             mu_;
+    float             sigma_;
+    float             lambda_;
+    float             window_days_ = 5.0f;
+    bool              follow_      = true;
 };
+
+/// main.cpp / SceneRegistry 用のファクトリ: Streaming の Runner + Panel を 1 つのシーンに束ねる。
+std::unique_ptr<Scene> make_streaming_scene();
 
 }  // namespace quantviz::viz

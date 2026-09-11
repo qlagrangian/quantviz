@@ -3,9 +3,13 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <memory>
+#include <utility>
 
 #include <imgui.h>
 #include <implot.h>
+
+#include "panels/clock_panel.hpp"
 
 namespace quantviz::viz {
 
@@ -22,10 +26,10 @@ double now_seconds() {
 
 StreamingPanel::StreamingPanel(double dt, const scenes::StreamingModel::Config& initial, double initial_speed)
     : dt_(dt),
+      clock_{static_cast<float>(initial_speed), false},
       mu_(static_cast<float>(initial.gbm.mu)),
       sigma_(static_cast<float>(initial.gbm.sigma)),
-      lambda_(static_cast<float>(initial.ewma_lambda)),
-      speed_(static_cast<float>(initial_speed)) {}
+      lambda_(static_cast<float>(initial.ewma_lambda)) {}
 
 void StreamingPanel::draw(Runner& runner) {
     ingest(runner);
@@ -64,7 +68,7 @@ void StreamingPanel::ingest(Runner& runner) {
 // ---------------------------------------------------------------- Spot
 void StreamingPanel::draw_price() {
     ImGui::SetNextWindowSize(ImVec2(760, 360), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(10, 32), ImGuiCond_FirstUseEver);
     ImGui::Begin("Spot - GBM (exact discretisation)");
     if (ImPlot::BeginPlot("##spot", ImVec2(-1, -1))) {
         ImPlot::SetupAxes("t (trading days)", "S", ImPlotAxisFlags_None, ImPlotAxisFlags_AutoFit);
@@ -81,7 +85,7 @@ void StreamingPanel::draw_price() {
 // ---------------------------------------------------------------- Volatility
 void StreamingPanel::draw_volatility() {
     ImGui::SetNextWindowSize(ImVec2(760, 320), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(ImVec2(10, 380), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(10, 402), ImGuiCond_FirstUseEver);
     ImGui::Begin("Volatility - annualised: sqrt(var_step / dt)");
     if (ImPlot::BeginPlot("##vol", ImVec2(-1, -1))) {
         ImPlot::SetupAxes("t (trading days)", "sigma", ImPlotAxisFlags_None, ImPlotAxisFlags_AutoFit);
@@ -106,7 +110,7 @@ void StreamingPanel::draw_controls(Runner& runner) {
     using scenes::StreamingModel;
 
     ImGui::SetNextWindowSize(ImVec2(420, 690), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(ImVec2(780, 10), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(780, 32), ImGuiCond_FirstUseEver);
     ImGui::Begin("Control");
 
     ImGui::SeparatorText("Model parameters (applied from the next step)");
@@ -118,39 +122,40 @@ void StreamingPanel::draw_controls(Runner& runner) {
         runner.send(Command::set_param(StreamingModel::kEwmaLambda, lambda_));
     ImGui::TextDisabled("effective window ~ 1/(1-lambda) = %.0f steps", 1.0 / (1.0 - static_cast<double>(lambda_)));
 
-    ImGui::SeparatorText("Simulation clock");
-    if (ImGui::SliderFloat("speed (x)", &speed_, 0.01f, 100.0f, "%.2fx", ImGuiSliderFlags_Logarithmic))
-        runner.send(Command::set_speed(speed_));
-    if (ImGui::Button(paused_ ? "Resume" : "Pause", ImVec2(100, 0))) {
-        paused_ = !paused_;
-        runner.send(paused_ ? Command::pause() : Command::resume());
-    }
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!paused_);
-    if (ImGui::Button("Step", ImVec2(100, 0))) runner.send(Command::step_once());
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    if (ImGui::Button("Reset", ImVec2(100, 0))) {
-        runner.send(Command::reset());
-        clear_history();
-    }
+    draw_clock_controls(clock_, runner, [this] { clear_history(); });
 
     ImGui::SeparatorText("View");
     ImGui::Checkbox("follow latest", &follow_);
     ImGui::SliderFloat("window (days)", &window_days_, 0.5f, 60.0f, "%.1f");
 
     ImGui::SeparatorText("Telemetry");
-    ImGui::Text("seq            %llu", static_cast<unsigned long long>(last_.seq));
+    // 共通の行（seq / snapshots per sec / ring / steps / frame）は clock_panel.hpp、この下はシーン固有。
+    draw_runner_telemetry(runner, last_.seq, rate_ema_);
     ImGui::Text("t              %.3f y  (%.2f days)", last_.t, last_.t * kTradingDays);
     ImGui::Text("spot           %.4f", last_.spot);
     ImGui::Text("last log ret   %+.6f", last_.log_return);
-    ImGui::Text("snapshots/s    %.0f", rate_ema_);
-    ImGui::Text("queued         %zu / %zu", runner.queued_snapshots(), Runner::snapshot_capacity());
-    ImGui::Text("dropped        %llu", static_cast<unsigned long long>(runner.dropped_snapshots()));
-    ImGui::Text("core steps     %llu", static_cast<unsigned long long>(runner.total_steps()));
-    ImGui::Text("frame          %.2f ms", 1000.0 / static_cast<double>(ImGui::GetIO().Framerate));
 
     ImGui::End();
+}
+
+// ---------------------------------------------------------------- シーン生成（main.cpp / SceneRegistry 用）
+std::unique_ptr<Scene> make_streaming_scene() {
+    constexpr double kDt = 1.0 / (252.0 * 390.0);  // 1 分足（年単位）
+
+    scenes::StreamingModel::Config model_cfg;
+    model_cfg.gbm         = {100.0, 0.05, 0.20};  // s0, mu, sigma
+    model_cfg.ewma_lambda = 0.94;
+    model_cfg.seed        = 42;
+
+    bridge::RunnerConfig run_cfg;
+    run_cfg.dt                     = kDt;
+    run_cfg.clock.steps_per_second = 500.0;  // speed 1x: 1 取引日(390 本) ≈ 0.8 壁秒
+    run_cfg.clock.speed            = 1.0;
+    run_cfg.publish_every          = 1;
+
+    // Panel は in-place 構築（History を抱えた大きな値をスタックに積まない）。
+    return std::make_unique<RunnerScene<scenes::StreamingModel, StreamingPanel>>(
+        scenes::StreamingModel{model_cfg}, run_cfg, std::in_place, kDt, model_cfg, run_cfg.clock.speed);
 }
 
 void StreamingPanel::clear_history() {

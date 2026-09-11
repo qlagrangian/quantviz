@@ -127,7 +127,7 @@ M2 と M3 は独立に進められる。M4 は M2（FDM が LSM の参照解）�
 
 **DoD 追加項目**
 - 3 シーンが `scene_registry` から選べ、Streaming を含む 4 シーンで Pause/Step/Reset が同じ UI で動く
-- BS の SIMD 版がスカラ版に対し ≥ 2 倍高速（`BENCH-03`）
+- BS の SIMD 版がスカラ版より高速（`BENCH-03`、目標 ≥ 1.2×。≥ 2× は BS-10 の厳密一致と両立しないため改定、`03_tdd_spec.md` §9.1）
 
 **リスク** `std::experimental::simd` のコンパイラ差 → intrinsics へのフォールバックを最初から用意。GARCH の MLE が局所解 → 複数初期値・パラメータ変換で対処、テストは合成データの復元幅を SE ベースで緩める。
 

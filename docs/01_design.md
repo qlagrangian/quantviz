@@ -198,7 +198,8 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | `pricing/black_scholes.hpp` 🔜M1 | BS 価格・Greeks、ストライク配列版（SIMD） | `price(S,K,T,r,σ,type)`, `greeks(...)`, `price_strip(span<K>)` | put-call parity、境界条件、スカラ版 == 配列版 |
 | `stats/garch.hpp` 🔜M1 | GARCH(1,1) 尤度・フィルタ | `log_likelihood(ω,α,β, span<r>)`, `filter(...)` | α+β<1 の定常制約。σ²>0 |
 | `stats/optim.hpp` 🔜M1 | Nelder-Mead / BFGS | `minimize(f, x0, opts)→{x, f, iters, path}` | 反復履歴を返す（尤度面上の軌跡描画用） |
-| `stats/kalman.hpp` 🔜M1 | 線形カルマン（固定サイズ） | `predict`, `update(z)`, `state`, `cov` | 共分散は対称・半正定値 |
+| `math/mat.hpp` ✅M1 | 固定サイズ行列（`std::array`、ヒープなし） | `Mat<R,C>`, `transpose`, `inverse()`→`optional`（≤3×3 閉形式、`tol` は行列式スケールに対する相対値）, `is_symmetric`, `is_psd` | POD。NaN は全述語で拒否 |
+| `stats/kalman.hpp` ✅M1 | 線形カルマン（固定サイズ） | `predict(F,Q)`, `update(H,z,R)`→イノベーション（事前残差）, `state`, `cov`, `reset`, `skipped_updates` | Joseph 形 + 明示的対称化で共分散は対称・半正定値。NaN 観測・特異 S は状態を壊さずスキップして数える（例外なし） |
 | `pricing/fdm_cn.hpp` 🔜M2 | Crank–Nicolson + PSOR（American） | `init(grid)`, `step_backward()`, `values()`, `exercise_boundary()` | American ≥ intrinsic、≥ European |
 | `math/tridiag.hpp` 🔜M2 | Thomas 法 | `solve(a,b,c,d)` | 密行列解と一致 |
 | `micro/order_book.hpp` 🔜M3 | 板・マッチング | `submit(limit/market)`, `cancel`, `best_bid/ask`, `depth(N)` | bid<ask、価格時間優先、数量保存 |
@@ -243,8 +244,9 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | `main.cpp` ✅ | GLFW + ImGui + ImPlot の起動・フレームループ・終了 |
 | `panels/<scene>_panel.*` 🔜 | シーンごとに 1 パネル。`draw(Runner<M>&)` の形を揃える |
 | `gl/surface_renderer.*` 🔜M2 | グリッド → 三角形メッシュ → 法線 → 単純ライティング → カメラ。ImGui ウィンドウ内にテクスチャとして描く |
-| `panels/common_controls.*` 🔜M1 | 時計 UI（速度・Pause・Step・Reset）とテレメトリの共通化 |
-| `scene_registry.*` 🔜M1 | 起動時のシーン選択（各シーンは独立した Runner を持つ） |
+| `clock_controls.hpp`（vizcore）✅M1 | 時計 UI の状態 `ClockControlState` と Command 生成の純関数（`toggle_pause`, `set_speed`, `step_once`, `reset`, `step_allowed`）。ImGui 非依存でテスト可能（VIZ-03） |
+| `panels/clock_panel.hpp` ✅M1 | 上記に ImGui を被せた共通ウィジェット `draw_clock_controls` と共通テレメトリ行 `draw_runner_telemetry`。全シーンの Control ウィンドウが使う |
+| `scene_registry.hpp`（vizcore）✅M1 | `Scene`（Runner + Panel の型消去）, `RunnerScene<M, Panel, SnapCap>`（唯一の具象、デストラクタで join）, `SceneRegistry`（名前→生成関数。`select` は前シーンを `stop()` してから破棄し、新シーンを `start()`）。`main.cpp` はメニューバーで切り替えるだけ。生きているシーンは常に高々 1 つ |
 
 ---
 
@@ -256,7 +258,7 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | false sharing | ring の head / tail / 各キャッシュを別キャッシュラインに配置 | `RING-08`（レイアウト検査） |
 | 同期コスト | SPSC + acquire/release のみ。mutex・condvar なし | `BENCH-01`（目標 < 20 ns / push+pop） |
 | 描画とコアの分離 | vsync（60 fps）とコアの `steps_per_second` は独立。描画の遅延はコアに伝播しない（drop で吸収） | テレメトリ `dropped`, `queued` |
-| SIMD 🔜M1 | Black–Scholes のストライク配列版で `std::experimental::simd` または手書き AVX2。スカラ版と一致をテスト | `BS-xx` |
+| SIMD ✅M1 | Black–Scholes のストライク配列版で `std::experimental::simd`（無ければ AVX2 intrinsics、無ければスカラ）。スカラ版と **bit 一致**（`FP_FAST_FMA` に応じて両経路で同じ縮約を行う）。超越関数はレーンごとに libm を呼ぶため速度は ≈1.2×。高速近似版は M5 | `BS-10`, `BENCH-03` |
 | メモリ配置 🔜M2/M3 | FDM グリッドは連続配列（SoA）、板は価格レベル配列 + intrusive list | `BENCH-xx` |
 | 計測 🔜M5 | シーンごとの `step` 時間・フレーム時間・dropped をパフォーマンスパネルで常時表示。`perf` でキャッシュミス |  |
 

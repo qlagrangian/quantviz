@@ -41,7 +41,27 @@ jobs:
           cmake -S . -B build-tsan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DQUANTVIZ_BUILD_VIZ=OFF \
                 -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
           cmake --build build-tsan -j
-          ctest --test-dir build-tsan --output-on-failure -L "" -R "RING|RUNNER"
+          ctest --test-dir build-tsan --output-on-failure -R "RING|RUNNER|VIZ"
+
+  simd-legs:
+    name: BS strip bit-identity under FMA / AVX2 (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "experimental-simd + fma", flags: "-mavx2 -mfma" }
+          - { name: "avx2-intrinsics + fma",   flags: "-DQUANTVIZ_BS_SIMD_BACKEND=1 -mavx2 -mfma" }
+          - { name: "scalar fallback",         flags: "-DQUANTVIZ_BS_SIMD_BACKEND=0" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lukka/get-cmake@latest
+      - name: Configure + build + test [bs]
+        run: |
+          cmake -S . -B build-simd -G Ninja -DCMAKE_BUILD_TYPE=Release -DQUANTVIZ_BUILD_VIZ=OFF \
+                -DQUANTVIZ_WARNINGS_AS_ERRORS=ON -DCMAKE_CXX_FLAGS="${{ matrix.flags }}"
+          cmake --build build-simd -j
+          ctest --test-dir build-simd --output-on-failure -R "^BS-"
 
   viz-build:
     name: viewer builds (ubuntu, FetchContent imgui/implot)
