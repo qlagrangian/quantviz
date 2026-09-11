@@ -231,25 +231,25 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| OPTIM-01 | Nelder–Mead が 2 次関数の最小点を 1e-8 で求める | N | ⬜ |
-| OPTIM-02 | Nelder–Mead が Rosenbrock で (1,1) に 1e-4 で到達 | N | ⬜ |
-| OPTIM-03 | 返す反復履歴の best f は単調非増加 | P | ⬜ |
-| OPTIM-04 | BFGS（数値勾配）が 2 次関数で 20 反復以内に 1e-8 収束 | N | ⬜ |
-| OPTIM-05 | `max_iter` を超えない。到達時は `converged = false` | U | ⬜ |
-| OPTIM-06 | 制約変換（logit / softplus）の往復が恒等（相対 1e-12） | N | ⬜ |
+| OPTIM-01 | Nelder–Mead が 2 次関数の最小点を 1e-8 で求める | N | ✅ |
+| OPTIM-02 | Nelder–Mead が Rosenbrock で (1,1) に 1e-4 で到達 | N | ✅ |
+| OPTIM-03 | 返す反復履歴の best f は単調非増加 | P | ✅ |
+| OPTIM-04 | BFGS（数値勾配）が 2 次関数で 20 反復以内に 1e-8 収束 | N | ✅ |
+| OPTIM-05 | `max_iter` を超えない。到達時は `converged = false` | U | ✅ |
+| OPTIM-06 | 制約変換（logit / softplus）の往復が恒等（相対 1e-12） | N | ✅ |
 
 ### 4.5 GARCH — `core/stats/garch.hpp`, `scenes/garch_model.hpp`
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| GARCH-01 | σ²_t = ω + α r²_{t−1} + β σ²_{t−1} の 3 ステップ手計算と一致 | N | ⬜ |
-| GARCH-02 | 無条件分散 ω/(1−α−β) にフィルタが収束（定数入力） | N | ⬜ |
-| GARCH-03 | 対数尤度 −½Σ(log 2π + log σ²_t + r²_t/σ²_t) が直接計算と一致 | N | ⬜ |
-| GARCH-04 | α+β ≥ 1 は定常制約違反として拒否（ペナルティ or 変換で到達不能） | P | ⬜ |
-| GARCH-05 | パラメータ変換（無制約 ↔ 制約）の往復が恒等 | N | ⬜ |
-| GARCH-06 | 合成 GARCH（ω=1e-6, α=0.08, β=0.90, N=20000）から MLE が α̂, β̂ を ±0.03 で復元（seed 固定・根拠: 漸近 SE ≈ 0.007） | S | ⬜ |
-| GARCH-07 | 大標本で真値の尤度 ≥ 摂動値の尤度 | P | ⬜ |
-| GARCH-08 | 半減期 ln(0.5)/ln(α+β) が α+β↑ で単調増大 | P | ⬜ |
+| GARCH-01 | σ²_t = ω + α r²_{t−1} + β σ²_{t−1} の 3 ステップ手計算と一致 | N | ✅ |
+| GARCH-02 | 無条件分散 ω/(1−α−β) にフィルタが収束（定数入力） | N | ✅ |
+| GARCH-03 | 対数尤度 −½Σ(log 2π + log σ²_t + r²_t/σ²_t) が直接計算と一致 | N | ✅ |
+| GARCH-04 | α+β ≥ 1 は定常制約違反として拒否（ペナルティ or 変換で到達不能） | P | ✅ |
+| GARCH-05 | パラメータ変換（無制約 ↔ 制約）の往復が恒等 | N | ✅ |
+| GARCH-06 | 合成 GARCH（ω=1e-6, α=0.08, β=0.90, N=20000）から MLE が α̂, β̂ を ±0.03 で復元（seed 固定・根拠: 漸近 SE ≈ 0.007） | S | ✅ |
+| GARCH-07 | 大標本で真値の尤度 ≥ 摂動値の尤度 | P | ✅ |
+| GARCH-08 | 半減期 ln(0.5)/ln(α+β) が α+β↑ で単調増大 | P | ✅ |
 | GARCH-09 | Model 契約充足、Snapshot（σ_t, 真値, 尤度格子 固定 G×G, 軌跡 最新 K 点）は POD | K | ⬜ |
 | GARCH-10 | 尤度格子の全値が有限、最大値の格子点が MLE 推定値の隣接格子内 | P | ⬜ |
 | GARCH-11 | 最適化軌跡の終点 = 推定値 | U | ⬜ |

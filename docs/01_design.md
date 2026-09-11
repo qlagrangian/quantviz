@@ -196,8 +196,8 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | `stats/welford.hpp` ✅ | 逐次平均・分散 | `push`, `mean`, `variance`(n-1), `population_variance` | n<2 で分散 0。O(1) 更新 |
 | `stats/ewma.hpp` ✅ | EWMA 分散（平均ゼロ仮定） | `push`, `variance`, `volatility`, `set_lambda` | λ∈(0,1) にクランプ。初回は r² で初期化 |
 | `pricing/black_scholes.hpp` ✅M1 | BS 価格・Greeks、ストライク配列版（SIMD） | `bs_price(S,K,T,r,σ,type)`, `bs_greeks(...)`, `bs_price_strip(S, span<K>, T, r, σ, type, span<out>)`, `norm_cdf` | put-call parity、境界条件、スカラ版 == 配列版（bit 一致。算術は `bs_price_block<Ops>` 1 本に集約し、FMA 縮約は `QUANTVIZ_BS_USE_FMA` で両経路同一） |
-| `stats/garch.hpp` 🔜M1 | GARCH(1,1) 尤度・フィルタ | `log_likelihood(ω,α,β, span<r>)`, `filter(...)` | α+β<1 の定常制約。σ²>0 |
-| `stats/optim.hpp` 🔜M1 | Nelder-Mead / BFGS | `minimize(f, x0, opts)→{x, f, iters, path}` | 反復履歴を返す（尤度面上の軌跡描画用） |
+| `stats/garch.hpp` ✅M1 | GARCH(1,1) 尤度・フィルタ・MLE・生成 | `garch_filter`, `garch_log_likelihood`（非定常は −inf）, `garch_from/to_unconstrained`（softplus + sigmoid、α+β<1 が到達不能）, `garch_fit` / `garch_fit_into`（割り当て再利用、参照 3 点の尤度で明確に負けた時だけ再試行）, `garch_simulate`, `garch_half_life` | α+β<1 の定常制約。σ²>0。ローリング再推定は `max_iter=200` で平均 0.4〜0.6 ms |
+| `stats/optim.hpp` ✅M1 | Nelder–Mead / BFGS（数値勾配 + Armijo） | `nelder_mead` / `bfgs`（値返し）と `*_into`（`OptimResult` 再利用で割り当てなし）, `OptimOptions`, 制約変換 `to_unit` / `to_positive` | `path` は常に非空で `front == x0`, `back == x`。非有限な目的関数では `converged=false` |
 | `math/mat.hpp` ✅M1 | 固定サイズ行列（`std::array`、ヒープなし） | `Mat<R,C>`, `transpose`, `inverse()`→`optional`（≤3×3 閉形式、`tol` は行列式スケールに対する相対値）, `is_symmetric`, `is_psd` | POD。NaN は全述語で拒否 |
 | `stats/kalman.hpp` ✅M1 | 線形カルマン（固定サイズ） | `predict(F,Q)`, `update(H,z,R)`→イノベーション（事前残差）, `state`, `cov`, `reset`, `skipped_updates` | Joseph 形 + 明示的対称化で共分散は対称・半正定値。NaN 観測・特異 S は状態を壊さずスキップして数える（例外なし） |
 | `pricing/fdm_cn.hpp` 🔜M2 | Crank–Nicolson + PSOR（American） | `init(grid)`, `step_backward()`, `values()`, `exercise_boundary()` | American ≥ intrinsic、≥ European |
