@@ -266,9 +266,9 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 | KALMAN-06 | イノベーションの 1 次自己相関が 4 SE 以内で 0（ホワイト） | S | ✅ |
 | KALMAN-07 | ランダムウォーク β を追跡し、±3σ 帯に 95 % 以上の時点で入る | S | ✅ |
 | KALMAN-08 | Q=0 で定常回帰の β が OLS 推定値に収束（相対 1e-6） | N | ✅ |
-| KALMAN-09 | Model 契約充足、Snapshot POD | K | ⬜ |
-| KALMAN-10 | 共和分ペア生成: スプレッドが定常（分散が N で発散しない） | S | ⬜ |
-| KALMAN-11 | SetParam(観測ノイズ) は次ステップから反映 | U | ⬜ |
+| KALMAN-09 | Model 契約充足、Snapshot POD | K | ✅ |
+| KALMAN-10 | 共和分ペア生成: スプレッドが定常（分散が N で発散しない） | S | ✅ |
+| KALMAN-11 | SetParam(観測ノイズ) は次ステップから反映 | U | ✅ |
 
 ---
 

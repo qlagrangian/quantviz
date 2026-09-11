@@ -5,18 +5,26 @@
 
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <optional>
+#include <type_traits>
 #include <vector>
 
+#include "quantviz/bridge/command.hpp"
+#include "quantviz/bridge/model_concept.hpp"
 #include "quantviz/core/math/mat.hpp"
 #include "quantviz/core/rng.hpp"
 #include "quantviz/core/stats/kalman.hpp"
+#include "quantviz/scenes/kalman_pair_model.hpp"
 
 using Catch::Matchers::WithinAbs;
 using Catch::Matchers::WithinRel;
+using quantviz::bridge::Command;
 using quantviz::core::Kalman;
 using quantviz::core::Mat;
+using quantviz::scenes::KalmanPairModel;
+using quantviz::scenes::KalmanPairSnapshot;
 
 namespace {
 
@@ -26,6 +34,23 @@ void check_close(const Mat<R, C>& actual, const Mat<R, C>& expected, double tol)
     for (std::size_t i = 0; i < R; ++i)
         for (std::size_t j = 0; j < C; ++j) CHECK_THAT(actual(i, j), WithinAbs(expected(i, j), tol));
 }
+
+/// KALMAN-09..11 が共有するシーン設定。既定値に引きずられないよう全項目を明示する。
+KalmanPairModel::Config pair_config() {
+    KalmanPairModel::Config c;
+    c.x0             = 100.0;
+    c.x_vol          = 0.20;
+    c.beta_center    = 1.20;
+    c.beta_reversion = 0.002;
+    c.state_noise    = 0.003;
+    c.obs_noise      = 2.0;
+    c.beta_prior     = 1.0;
+    c.prior_var      = 0.25;
+    c.seed           = 20240912;
+    return c;
+}
+
+constexpr double kDt = 1.0 / 252.0;  // 1 ステップ = 1 取引日
 
 }  // namespace
 
@@ -405,4 +430,260 @@ TEST_CASE("KALMAN-08: with Q = 0 the regression state converges to the OLS estim
         kf.update(Mat<1, 1>{{x}}, Mat<1, 1>{{y}}, r);
     }
     CHECK_THAT(kf.state()(0, 0), WithinRel(sxy / sxx, 1e-6));
+}
+
+TEST_CASE("KALMAN-09: the pair scene satisfies the Model contract and publishes a compact POD snapshot",
+          "[kalman][contract]") {
+    STATIC_REQUIRE(quantviz::bridge::Model<KalmanPairModel>);
+    STATIC_REQUIRE(std::is_trivially_copyable_v<KalmanPairSnapshot>);
+    STATIC_REQUIRE(std::is_default_constructible_v<KalmanPairSnapshot>);
+    STATIC_REQUIRE(sizeof(KalmanPairSnapshot) <= 128);  // 2 キャッシュライン以内
+
+    SECTION("a fresh model reports seq 0, the initial pair and the current parameters") {
+        const KalmanPairModel m(pair_config());
+        const auto            s = m.snapshot();
+        CHECK(s.seq == 0);
+        CHECK(s.t == 0.0);
+        CHECK(s.x == 100.0);
+        CHECK(s.beta_true == 1.20);
+        CHECK(s.y == 120.0);  // β·x（観測ノイズはまだ引いていない）
+        CHECK(s.obs_noise == 2.0);
+        CHECK(s.state_noise == 0.003);
+        CHECK(s.beta_hat == 1.0);    // フィルタの事前平均
+        CHECK(s.beta_var == 0.25);   // フィルタの事前分散
+        CHECK(s.spread == 0.0);
+        CHECK(s.innovation == 0.0);
+        CHECK(s.skipped == 0);
+    }
+
+    SECTION("two models with the same seed produce bit-identical paths") {
+        KalmanPairModel a(pair_config()), b(pair_config());
+        for (int i = 0; i < 500; ++i) {
+            a.step(kDt);
+            b.step(kDt);
+            const auto sa = a.snapshot(), sb = b.snapshot();
+            REQUIRE(sa.x == sb.x);
+            REQUIRE(sa.y == sb.y);
+            REQUIRE(sa.beta_true == sb.beta_true);
+            REQUIRE(sa.beta_hat == sb.beta_hat);
+        }
+    }
+
+    SECTION("the published estimate equals a bare Kalman<1,1> fed the same observations (dual-run)") {
+        // シーンは「生成（Rng）+ core::Kalman」の糊でしかないことを、公開された (x, y) を
+        // そのまま素のフィルタに流して bit 一致で確かめる（演算順が同じなので厳密一致する）。
+        const auto      cfg = pair_config();
+        KalmanPairModel m(cfg);
+        Kalman<1, 1>    bare(Mat<1, 1>{{cfg.beta_prior}}, Mat<1, 1>{{cfg.prior_var}});
+
+        const auto f = Mat<1, 1>::identity();
+        const auto q = Mat<1, 1>{{cfg.state_noise * cfg.state_noise}};
+        const auto r = Mat<1, 1>{{cfg.obs_noise * cfg.obs_noise}};
+
+        for (int i = 0; i < 500; ++i) {
+            m.step(kDt);
+            const auto s = m.snapshot();
+            bare.predict(f, q);
+            const double innovation = bare.update(Mat<1, 1>{{s.x}}, Mat<1, 1>{{s.y}}, r)(0, 0);
+            REQUIRE(s.seq == static_cast<std::uint64_t>(i + 1));
+            REQUIRE(s.beta_hat == bare.state()(0, 0));
+            REQUIRE(s.beta_var == bare.cov()(0, 0));
+            REQUIRE(s.innovation == innovation);
+            REQUIRE(s.spread == s.y - bare.state()(0, 0) * s.x);
+        }
+    }
+
+    SECTION("Reset replays the same path bit-for-bit") {
+        // Reset は Rng::reseed 経由で seed を巻き戻す。reseed は std::normal_distribution の
+        // Box-Muller キャッシュも捨てるので、「奇数個の normal() を引いた直後の Reset」でも
+        // 系列は最初から完全に一致する。ここはその契約を bit 一致で固定する。
+        KalmanPairModel m(pair_config());
+        for (int i = 0; i < 200; ++i) m.step(kDt);
+        const auto first = m.snapshot();
+
+        m.apply(Command::reset());
+        REQUIRE(m.snapshot().seq == 0);
+        for (int i = 0; i < 200; ++i) m.step(kDt);
+        const auto second = m.snapshot();
+
+        REQUIRE(second.seq == first.seq);
+        REQUIRE(second.t == first.t);
+        REQUIRE(second.x == first.x);
+        REQUIRE(second.y == first.y);
+        REQUIRE(second.beta_true == first.beta_true);
+        REQUIRE(second.beta_hat == first.beta_hat);
+        REQUIRE(second.beta_var == first.beta_var);
+        REQUIRE(second.spread == first.spread);
+        REQUIRE(second.innovation == first.innovation);
+    }
+
+    SECTION("Reset rewinds the path and the filter but keeps the parameters") {
+        KalmanPairModel m(pair_config());
+        for (int i = 0; i < 200; ++i) m.step(kDt);
+        m.apply(Command::set_param(KalmanPairModel::kObsNoise, 3.5));
+        m.apply(Command::reset());
+        const auto s = m.snapshot();
+        CHECK(s.seq == 0);
+        CHECK(s.t == 0.0);
+        CHECK(s.x == 100.0);
+        CHECK(s.beta_true == 1.20);
+        CHECK(s.beta_hat == 1.0);
+        CHECK(s.beta_var == 0.25);
+        CHECK(s.obs_noise == 3.5);  // UI で変えた値は Reset で失わない
+    }
+}
+
+TEST_CASE("KALMAN-10: the generated pair is cointegrated - the spread variance does not grow with N",
+          "[kalman][statistical]") {
+    // x と y は個別には非定常（μ = 0 の厳密離散化 GBM）だが、y_t = β_t x_t + ε_t の β_t が
+    // kBetaTrue を中心とする平均回帰付きランダムウォークなので、ヘッジ後のスプレッド
+    // s_t = y_t − β̂_t x_t は定常になる。定常なら前半 N/2 点と後半 N/2 点の標本分散は
+    // 同じ母数の推定値であり、その比は 1 の周りに分布する。
+    //   期待値 1、正規近似での標本分散の相対 SE = sqrt(2/(n−1)) = sqrt(2/1999) ≈ 3.2 %、
+    //   比の相対 SE はその √2 倍 ≈ 4.5 %。4 SE でも ±18 %。
+    // 残る系統的なずれは x の水準変化（Var(s) = R²/(x²P⁻+R) が x に緩く依存する）で、
+    // 既定パラメータでは x が 2 倍になっても 30 % 程度。よって [0.5, 2] は 4 SE より
+    // ずっと緩いしきい値で、seed 固定なら安定して通る。
+    const int       n = 4000;
+    KalmanPairModel m(pair_config());
+
+    std::vector<double> spread, x;
+    spread.reserve(static_cast<std::size_t>(n));
+    x.reserve(static_cast<std::size_t>(n));
+    for (int i = 0; i < n; ++i) {
+        m.step(kDt);
+        const auto s = m.snapshot();
+        spread.push_back(s.spread);
+        x.push_back(s.x);
+    }
+
+    const auto sample_variance = [](const std::vector<double>& v, std::size_t lo, std::size_t hi) {
+        const double count = static_cast<double>(hi - lo);
+        double       mean  = 0.0;
+        for (std::size_t i = lo; i < hi; ++i) mean += v[i];
+        mean /= count;
+        double ss = 0.0;
+        for (std::size_t i = lo; i < hi; ++i) ss += (v[i] - mean) * (v[i] - mean);
+        return ss / (count - 1.0);
+    };
+
+    const std::size_t half   = static_cast<std::size_t>(n) / 2;
+    const std::size_t all    = static_cast<std::size_t>(n);
+    const double      first  = sample_variance(spread, 0, half);
+    const double      second = sample_variance(spread, half, all);
+    REQUIRE(first > 0.0);
+    REQUIRE(second > 0.0);
+
+    const double ratio = first / second;
+    INFO("var(first half) = " << first << ", var(second half) = " << second << ", ratio = " << ratio);
+    CHECK(ratio >= 0.5);
+    CHECK(ratio <= 2.0);
+
+    // 検定が空虚でないこと（スプレッドが「動いていないから定常に見える」だけではないこと）:
+    // x は μ = 0・σ = 0.20 の GBM を T = N·dt = 15.87 年ぶん歩くので log x の標準偏差は
+    // σ√T = 0.80、水準の標本標準偏差は x0 = 100 のオーダー（この seed では 16.8）。
+    // 一方スプレッドは定常で標準偏差 ≈ sqrt(R²/(x²P⁻+R)) ≈ 1.8（σ_ε = 2 の少し内側）。
+    // 実測比は約 9 倍なので、しきい値 5 倍は 1.8 倍の余裕がある。
+    CHECK(std::sqrt(sample_variance(x, 0, all)) > 5.0 * std::sqrt(sample_variance(spread, 0, all)));
+}
+
+TEST_CASE("KALMAN-11: SetParam(observation noise) takes effect from the next step", "[kalman][unit]") {
+    SECTION("apply() does not step; the new observation noise is used from the next step") {
+        KalmanPairModel m(pair_config()), control(pair_config());
+        for (int i = 0; i < 20; ++i) {
+            m.step(kDt);
+            control.step(kDt);
+        }
+        const auto before = m.snapshot();
+        REQUIRE(before.obs_noise == 2.0);
+
+        m.apply(Command::set_param(KalmanPairModel::kObsNoise, 8.0));
+        const auto applied = m.snapshot();
+        CHECK(applied.seq == before.seq);             // apply 自体はステップを進めない
+        CHECK(applied.obs_noise == 8.0);              // 現在のパラメータとしては即座に見える
+        CHECK(applied.beta_hat == before.beta_hat);   // 推定は次のステップまで変わらない
+        CHECK(applied.beta_var == before.beta_var);
+
+        m.step(kDt);
+        control.step(kDt);
+        const auto after = m.snapshot();
+        CHECK(after.seq == before.seq + 1);
+        CHECK(after.obs_noise == 8.0);
+        // R が変わったので、同じ 1 ステップでも共分散の更新結果が対照モデルと異なる
+        CHECK(after.beta_var != control.snapshot().beta_var);
+    }
+
+    SECTION("the state noise and the true beta are settable as well") {
+        // κ = 0.002 の平均回帰は半減期 ln2/κ ≈ 347 ステップなので、3000 ステップあれば
+        // β_t は新しい中心 2.0 の定常分布（std = state_noise/sqrt(2κ−κ²) ≈ 0.16）に入る。
+        // 許容 0.8 は約 5 σ。seed 固定。
+        KalmanPairModel m(pair_config());
+        m.apply(Command::set_param(KalmanPairModel::kStateNoise, 0.01));
+        m.apply(Command::set_param(KalmanPairModel::kBetaTrue, 2.0));
+        CHECK(m.snapshot().state_noise == 0.01);
+        for (int i = 0; i < 3000; ++i) m.step(kDt);
+        CHECK_THAT(m.snapshot().beta_true, WithinAbs(2.0, 0.8));
+    }
+
+    SECTION("bad input is clamped and unknown parameter ids are ignored") {
+        KalmanPairModel m(pair_config());
+        m.apply(Command::set_param(KalmanPairModel::kObsNoise, -1.0));
+        CHECK(m.snapshot().obs_noise > 0.0);  // R = 0 は S = x²P + R を特異にするので > 0 に保つ
+        m.apply(Command::set_param(KalmanPairModel::kStateNoise, -1.0));
+        CHECK(m.snapshot().state_noise == 0.0);  // Q ≥ 0
+
+        const auto before = m.snapshot();
+        m.apply(Command::set_param(999, 123.0));  // 未知 id は無視
+        const auto after = m.snapshot();
+        CHECK(after.obs_noise == before.obs_noise);
+        CHECK(after.state_noise == before.state_noise);
+        CHECK(after.beta_true == before.beta_true);
+
+        // NaN は「どの比較も false」なので std::max(v, lo) だと素通りする。素通りすると R = NaN →
+        // S = x²P⁻ + R が非有限 → core::Kalman::update が毎ステップ更新を捨て、Reset は cfg_ を
+        // 保持するので二度と復帰しない（ImGui のスライダーは ctrl+click で "nan" と打てる）。
+        // 下限を第 1 引数に置き、非有限を明示的に弾くことでこれを防ぐ。
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        const double inf = std::numeric_limits<double>::infinity();
+        m.apply(Command::set_param(KalmanPairModel::kObsNoise, nan));
+        CHECK(std::isfinite(m.snapshot().obs_noise));
+        CHECK(m.snapshot().obs_noise > 0.0);
+        m.apply(Command::set_param(KalmanPairModel::kStateNoise, nan));
+        CHECK(m.snapshot().state_noise == 0.0);
+        m.apply(Command::set_param(KalmanPairModel::kObsNoise, inf));
+        CHECK(std::isfinite(m.snapshot().obs_noise));
+
+        for (int i = 0; i < 100; ++i) m.step(kDt);  // クランプ後も有限値を保つ
+        CHECK(std::isfinite(m.snapshot().beta_hat));
+        CHECK(std::isfinite(m.snapshot().spread));
+        CHECK(std::isfinite(m.snapshot().beta_var));
+        CHECK(m.snapshot().skipped == 0);  // 観測更新が捨てられていない
+    }
+
+    SECTION("a non-finite true beta is rejected and the previous value is kept") {
+        const double    nan = std::numeric_limits<double>::quiet_NaN();
+        KalmanPairModel m(pair_config());
+        REQUIRE(m.snapshot().beta_true == 1.20);
+
+        m.apply(Command::set_param(KalmanPairModel::kBetaTrue, nan));
+        CHECK(m.snapshot().beta_true == 1.20);
+        m.apply(Command::set_param(KalmanPairModel::kBetaTrue, -std::numeric_limits<double>::infinity()));
+        CHECK(m.snapshot().beta_true == 1.20);
+
+        for (int i = 0; i < 100; ++i) m.step(kDt);
+        CHECK(std::isfinite(m.snapshot().beta_true));
+        CHECK(std::isfinite(m.snapshot().beta_hat));
+        CHECK(m.snapshot().skipped == 0);
+
+        // Config 経由の非有限・範囲外の値も構築時に弾く（UI 以外の経路も塞ぐ）。
+        auto bad           = pair_config();
+        bad.beta_center    = nan;
+        bad.x0             = 0.0;
+        bad.beta_reversion = 5.0;
+        KalmanPairModel guarded(bad);
+        const auto      gs = guarded.snapshot();
+        CHECK(std::isfinite(gs.beta_true));
+        CHECK(gs.x > 0.0);
+        CHECK(std::isfinite(gs.y));
+    }
 }

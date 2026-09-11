@@ -58,7 +58,8 @@ endif()
 # --- The viewer ------------------------------------------------------------
 add_executable(quantviz_viz
   src/main.cpp
-  src/panels/streaming_panel.cpp)
+  src/panels/streaming_panel.cpp
+  src/panels/kalman_panel.cpp)
 target_include_directories(quantviz_viz PRIVATE src)
 target_link_libraries(quantviz_viz PRIVATE
   quantviz::scenes quantviz::vizcore quantviz::warnings

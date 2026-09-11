@@ -229,7 +229,7 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | Streaming ✅ | `StreamingModel` | t, spot, log_return, Welford 平均/分散, EWMA 分散, μ/σ 真値, seq | mu, sigma, ewma_lambda |
 | Greeks 🔜M1 | `GreeksModel` | S, グリークス配列（ストライク軸 固定 N）, サーフェス格子（S×T 固定） | S, r, σ, T |
 | Garch 🔜M1 | `GarchModel` | σ_t 推定, 真値, 尤度面（α×β 固定格子）, 最適化軌跡（最新 K 点） | ω, α, β（真値）, optimizer |
-| Kalman 🔜M1 | `KalmanPairModel` | 2 価格, β 推定, β 分散, スプレッド | 観測ノイズ, 状態ノイズ, 真の β |
+| Kalman ✅M1 | `KalmanPairModel` | x, y（y = β_t x + ε）, β 真値, β̂, β 分散, スプレッド（事後残差）, イノベーション（事前残差）, skipped（縮退観測のスキップ数）, seq — 96 B | 観測ノイズ, 状態ノイズ, 真の β（β_t は κ=0.002 で真値へ平均回帰するランダムウォーク。フィルタは F=1 を仮定する意図的な軽い誤特定） |
 | Fdm 🔜M2 | `FdmAmericanModel` | V(S) の現在ステップ, 行使境界, 残り反復数 | K, r, σ, q, グリッド |
 | Lob 🔜M3 | `LobModel` | 上位 N レベル bid/ask, 直近約定, λ(t) | 到着率, Hawkes α/β, 大口注入 |
 | Lsm / Exec / Hjb 🔜M4 | 各 Model | パス束の縮約, 執行軌道, 価値関数格子 | シーン固有 |
