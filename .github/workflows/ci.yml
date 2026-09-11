@@ -55,3 +55,15 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DQUANTVIZ_BUILD_VIZ=ON -DQUANTVIZ_WARNINGS_AS_ERRORS=ON
           cmake --build build -j --target quantviz_viz
+
+  dep-rules:
+    name: layer dependency rules (DEP-01 / DEP-02)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: DEP-01 — no ImGui / ImPlot / GLFW / GL includes outside viz/src
+        run: |
+          ! grep -RnE '#include\s*[<"](imgui|implot|GLFW/|GL/)' core bridge scenes viz/include
+      - name: DEP-02 — core/ includes nothing from bridge/, scenes/, viz/
+        run: |
+          ! grep -RnE '#include\s*[<"]quantviz/(bridge|scenes|viz)/' core
