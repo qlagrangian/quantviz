@@ -3,6 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -489,7 +490,8 @@ TEST_CASE("KALMAN-09: the pair scene satisfies the Model contract and publishes 
             REQUIRE(s.beta_hat == bare.state()(0, 0));
             REQUIRE(s.beta_var == bare.cov()(0, 0));
             REQUIRE(s.innovation == innovation);
-            REQUIRE(s.spread == s.y - bare.state()(0, 0) * s.x);
+            // spread = y − β̂x は桁落ち量（|y| ≈ 100 に対し 1e-4）。FMA 縮約の有無で数 ulp ずれるので絶対許容で比較する。
+            REQUIRE_THAT(s.spread, WithinAbs(s.y - bare.state()(0, 0) * s.x, 1e-10 * std::max(1.0, std::abs(s.y))));
         }
     }
 
