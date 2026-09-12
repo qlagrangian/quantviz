@@ -87,6 +87,7 @@ jobs:
       - name: DEP-02 — core/ includes nothing from bridge/, scenes/, viz/
         run: |
           ! grep -RnE '#include\s*[<"]quantviz/(bridge|scenes|viz)/' core
-      - name: TEST-NAMES — TEST_CASE names are ASCII (ctest passes them on the command line; Windows mangles non-ASCII)
+      - name: TEST-NAMES — TEST_CASE names are ASCII and contain no [ ] (ctest passes them on the command line; Windows mangles non-ASCII; CatchAddTests splits the name list on ; but treats [ ] as list nesting)
         run: |
           ! grep -RnP 'TEST_CASE\(\s*"[^"]*[^\x00-\x7F]' tests
+          ! grep -RnP 'TEST_CASE\(\s*"[^"]*[\[\]]' tests

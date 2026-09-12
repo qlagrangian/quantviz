@@ -51,7 +51,7 @@ TEST_CASE("WEL-03: matches the two-pass mean and sample variance", "[welford][nu
     CHECK_THAT(w.stddev(), WithinRel(std::sqrt(var), 1e-10));
 }
 
-TEST_CASE("WEL-04: stays accurate with a huge offset where the naive E[x^2]-E[x]^2 formula fails",
+TEST_CASE("WEL-04: stays accurate with a huge offset where the naive E(x^2)-E(x)^2 formula fails",
           "[welford][numeric]") {
     Welford      w;
     const double offset = 1e9;

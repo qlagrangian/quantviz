@@ -242,7 +242,7 @@ TEST_CASE("GL-03: unproject(project(p)) recovers p (abs 1e-5)", "[gl][numeric]")
     }
 }
 
-TEST_CASE("GL-04: the projection's [0][0] scales as 1 / aspect", "[gl][unit]") {
+TEST_CASE("GL-04: the projection's (0,0) entry scales as 1 / aspect", "[gl][unit]") {
     const float fovy = 0.9f;
     const double f   = 1.0 / std::tan(static_cast<double>(fovy) / 2.0);
 
