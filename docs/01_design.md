@@ -243,6 +243,7 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | Greeks ✅M1 | `GreeksModel` | S（GBM, 経路ボラは固定）, 64 ストライクの price/Δ/Γ/ν/Θ/ρ（`bs_price_strip` の SIMD 経路を本番使用）, Γ(S,T) 48×32 格子（r/σ/T が変わった時だけ再計算）, 真値 r/σ/T, seq — 16.5 KB（M1 の例外、SnapCap 256） | スポットショック（×倍率, 非正・非有限は無視）, r, 価格ボラ σ, T, ストライク幅 |
 | Garch ✅M1 | `GarchModel` | 合成 GARCH の r_t と σ²_t 真値、ローリング窓（既定 500 日、10 ステップごとに `garch_fit_into` で warm-start 再推定）の推定 σ²・(ω̂,α̂,β̂)・対数尤度、尤度面 L(α,β) 32×32（ω=ω̂ の断面、非定常点は有限最小値にクランプ）、最適化軌跡（先頭から等間引きで最大 64 点、終点 = 推定値）、seq — 9.8 KB（M1 の例外、SnapCap 256）。窓を広げた直後は埋まるまで推定を出さない | ω, α, β（真値。α+β ≥ kMax なら比を保って縮小）, optimizer（NM / BFGS）, 窓長 [50, 2048] |
 | Kalman ✅M1 | `KalmanPairModel` | x, y（y = β_t x + ε）, β 真値, β̂, β 分散, スプレッド（事後残差）, イノベーション（事前残差）, skipped（縮退観測のスキップ数）, seq — 96 B | 観測ノイズ, 状態ノイズ, 真の β（β_t は κ=0.002 で真値へ平均回帰するランダムウォーク。フィルタは F=1 を仮定する意図的な軽い誤特定） |
+| VolSurface ✅M2 | `VolSurfaceModel`（SurfaceModel） | Snapshot: t, SSVI パラメータ, k/T 範囲, seq（80 B）。Surface: 64×32 の IV 格子 + 軸（8.6 KB、TripleBuffer 経由。パラメータ変更時だけ再計算） | σ_atm, ρ, η, γ（`ssvi_clamp` でクランプ） |
 | Fdm 🔜M2 | `FdmAmericanModel` | V(S) の現在ステップ, 行使境界, 残り反復数 | K, r, σ, q, グリッド |
 | Lob 🔜M3 | `LobModel` | 上位 N レベル bid/ask, 直近約定, λ(t) | 到着率, Hawkes α/β, 大口注入 |
 | Lsm / Exec / Hjb 🔜M4 | 各 Model | パス束の縮約, 執行軌道, 価値関数格子 | シーン固有 |

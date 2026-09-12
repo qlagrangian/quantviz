@@ -313,7 +313,7 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 | VOLSURF-01 | 全 (K,T) で IV > 0 | P | ✅ |
 | VOLSURF-02 | 既定パラメータでカレンダー裁定なし（総分散 σ²T が T で単調増大）。`ssvi_calendar_arbitrage_free` は Gatheral–Jacquier Thm 4.1 の条件と η(1+\|ρ\|) ≤ 2 の翼バンドの連言（後者は十分条件） | P | ✅ |
 | VOLSURF-03 | スキュー 0 でスマイルが ATM 対称 | N | ✅ |
-| VOLSURF-04 | Snapshot 格子は固定サイズ・POD、SetParam で形が変わる | K | ⬜ |
+| VOLSURF-04 | 面（`Surface`, 64×32, 8.6 KB）は固定サイズ・POD で `surface()` が全フィールドを書く。SetParam で次の `surface()` から形が変わり、apply は seq を動かさない。Snapshot は 80 B。Runner の `poll_surface` 往復 | K | ✅ |
 
 ### 5.5 TRIDIAG — `core/math/tridiag.hpp`
 
