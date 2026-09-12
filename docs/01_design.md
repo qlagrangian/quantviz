@@ -217,7 +217,7 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | `pricing/fdm_cn.hpp` ✅M2 | Crank–Nicolson + PSOR（American）、Rannacher 起動、キンクのセル平均化 | `init(grid, params)`, `step_backward()`（t=0 で no-op）, `values()`, `value_at`, `delta_at`, `exercise_boundary()`, `last_psor_iterations/converged` | American ≥ intrinsic、≥ European。2 次収束（比 ≈ 4）。割り当ては init だけ |
 | `math/tridiag.hpp` ✅M2 | Thomas 法 | `tridiag_solve(a,b,c,d,x,work)`（in-place 可、ゼロ・非有限ピボットで false） | 密行列解と一致（相対 1e-12） |
 | `micro/order_book.hpp` 🔜M3 | 板・マッチング | `submit(limit/market)`, `cancel`, `best_bid/ask`, `depth(N)` | bid<ask、価格時間優先、数量保存 |
-| `models/hawkes.hpp` 🔜M3 | 自己励起過程 | `simulate(thinning)`, `intensity(t)`, `log_likelihood` | 分岐比 α/β<1 |
+| `models/hawkes.hpp` ✅M3 | 自己励起過程 | `HawkesIntensity`（O(1) 逐次強度）, `hawkes_simulate`（Ogata thinning、割り当てなし）, `hawkes_log_likelihood`（O(n) 再帰 + 閉形式補償子）, `hawkes_fit` / `hawkes_fit_into`（softplus / sigmoid の無制約変換）, `hawkes_rescaled_residuals` | 分岐比 α/β<1 が変換で到達不能。時刻列は昇順・T 未満（Debug でアサート）。fit はオフライン専用（シーンの step から呼ばない） |
 | `pricing/lsm.hpp` 🔜M4 | Longstaff–Schwartz | `price(paths, basis)` | ≥ European（MC 誤差内） |
 | `exec/almgren_chriss.hpp` 🔜M4 | 最適執行 | `trajectory(X,T,λ,η,γ,σ)`, `frontier()` | Σ trades = X。λ=0 で TWAP |
 | `exec/hjb_merton.hpp` 🔜M4 | Merton HJB 数値解 | `solve(grid)`, `optimal_fraction(w)` | CRRA で定数比率 |
