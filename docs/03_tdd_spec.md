@@ -120,6 +120,8 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 | RUNNER-08 | `start()` は冪等。デストラクタは走行中スレッドを join する（ハングしない） | C | ✅ |
 | RUNNER-09 | `SurfaceModel` を満たす Model の Runner は `surface_every` ステップごとに面を `TripleBuffer` へ publish し、`poll_surface` は最新 1 枚だけを返す（古い面は捨てる）。非 SurfaceModel の Runner にはチャネルが生えない | U | ✅ |
 | RUNNER-10 | 一時停止中（その tick のステップ数が 0）に `Reset` / `SetParam` を適用したら、Snapshot（SurfaceModel なら面も）を 1 回 publish する。seq は再送でも減らない（Reset は 0 に戻す）。ステップがあった tick では追加の publish はしない | U | ✅ |
+| RUNNER-11 | Runner は各 step の所要時間を対数ビンのヒストグラム（atomic, relaxed）に記録し、描画側が読める。`measure_every` で k ステップに 1 サンプル。非計測設定では挙動不変 | U | ⬜ |
+| RUNNER-12 | 一時停止中の `StepOnce` で実行したステップは `publish_every` の位相に関わらず publish する（SurfaceModel なら面も）。走行中の間引きは変えない | U | ⬜ |
 
 ### 3.4 GBM — `core/models/gbm.hpp` → `tests/test_gbm.cpp`
 

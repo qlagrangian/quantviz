@@ -43,7 +43,14 @@ add_executable(quantviz_tests
   bench_order_book.cpp
   test_hawkes.cpp
   test_history2d.cpp
-  test_lob_scene.cpp)
+  test_lob_scene.cpp
+  # ---- M4
+  test_lsm.cpp
+  test_almgren_chriss.cpp
+  test_hjb_merton.cpp
+  test_lsm_scene.cpp
+  test_exec_scene.cpp
+  test_hjb_scene.cpp)
 
 target_link_libraries(quantviz_tests PRIVATE
   quantviz::core quantviz::bridge quantviz::scenes quantviz::vizcore quantviz::warnings
