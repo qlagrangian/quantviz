@@ -12,6 +12,10 @@
 
 ---
 
+## Task 0（先行・小）: Runner — 一時停止中の Reset / SetParam を即座に反映する（RUNNER-10）
+
+M2 の FDM シーンで露呈した bridge の穴: `Runner::tick` はステップ後にしか publish しないため、一時停止中に送った `Reset` / `SetParam` は次の Step まで画面に現れない（各パネルは「waiting…」で誤魔化している）。`drain_commands()` がモデル系コマンドを 1 つ以上適用し、その tick でステップが 0 なら、Snapshot（と SurfaceModel なら面）を 1 回 publish する。R3（コマンドはステップ前）と R4（seq 単調増加。同じ seq の再 publish は許す — 描画側の `prev_seq_` ガードは `seq <= prev_seq_` で clear するので、Reset で seq が 0 に戻る場合も同じ seq の再送も正しく扱える）を維持。仕様行 RUNNER-10 を `03_tdd_spec.md` に追加し、`tests/test_runner.cpp` に追記。統合担当が M3 の最初に単独タスクとして実施し、FDM / GARCH / Kalman / Greeks パネルの「waiting…」文言を確認する。
+
 ## ファイル構成（所有権）
 
 共有ファイル（`tests/CMakeLists.txt`, `viz/CMakeLists.txt`, `viz/src/main.cpp`, `.github/*`, `docs/*`, `README.md`）は統合担当だけが触る。テストファイルは足場として登録済み（空）。

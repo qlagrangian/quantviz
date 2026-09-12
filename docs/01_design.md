@@ -335,7 +335,7 @@ M0 実測（GCC 13, -O3, Xeon 想定）：`push+pop ≈ 4.4 ns`、`StreamingMode
 | UI からの不正値（負の σ、λ∉(0,1)、NaN） | コア側でクランプ／デフォルトへ。例外は投げない（`noexcept`） |
 | ring 満杯 | Snapshot は捨てて計数、Command は `send` が false。両方ノンブロッキング |
 | 未知の `param_id` | 無視 |
-| GLFW / GL 初期化失敗 | `main` が非 0 で終了。ログは stderr |
+| GLFW / GL 初期化失敗 | GLFW / コンテキスト作成の失敗は `main` が非 0 で終了。GL 3.0 関数のロード失敗（`gl_load()`）は stderr に欠けた関数名を出し、3D ウィンドウは「GL 未対応」の文言にフォールバックして viewer は続行する |
 | 数値の発散（FDM 不安定等） 🔜 | Snapshot に `status` フラグを載せ、描画が警告表示。コアは停止しない |
 | スレッド終了 | `Runner::stop()` が join まで責任を持つ。`jthread` で例外経路でも join |
 
