@@ -257,7 +257,8 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | `panels/streaming_panel.*` ✅ | Spot / Volatility / Control の 3 ウィンドウ |
 | `main.cpp` ✅ | GLFW + ImGui + ImPlot の起動・フレームループ・終了 |
 | `panels/{streaming,greeks,garch,kalman}_panel.*` ✅M1 | シーンごとに 1 パネル。`draw(Runner&)` + `make_<scene>_scene()`。共通部品は `panels/panel_common.hpp`（`now_seconds`, `kTradingDays`, `kPanelTop`, `setup_follow_axis`）と `viz/rate_meter.hpp`（受信レート EMA）。Reset 時は `prev_seq_` ガードでリング内の古い Snapshot を捨てる |
-| `gl/surface_renderer.*` 🔜M2 | グリッド → 三角形メッシュ → 法線 → 単純ライティング → カメラ。ImGui ウィンドウ内にテクスチャとして描く |
+| `gl/{math,camera,surface_mesh}.hpp`（vizcore）✅M2 | 列優先 `Mat4`、`look_at` / `perspective` / `inverse`、軌道カメラ `OrbitCamera`（project/unproject）、`SurfaceMesh`（N×M 格子 → 頂点 + 法線 + インデックス、z だけ更新・再確保なし、不等間隔軸でも 2 次精度の法線） |
+| `src/gl/{gl_loader,surface_renderer,surface_view}` ✅M2 | `glfwGetProcAddress` で GL 3.0 の 53 関数を自前ロード。FBO（DPI 対応）に Lambert + 高さ色 + 等高線で描き、`ImGui::Image` に貼る。`SurfaceView` がドラッグ回転・ホイールズーム・右ドラッグパン・R でリセット。`draw()` はアップロードしたかを返し、パネルは dirty フラグを sticky に扱う |
 | `clock_controls.hpp`（vizcore）✅M1 | 時計 UI の状態 `ClockControlState` と Command 生成の純関数（`toggle_pause`, `set_speed`, `step_once`, `reset`, `step_allowed`）。ImGui 非依存でテスト可能（VIZ-03） |
 | `panels/clock_panel.hpp` ✅M1 | 上記に ImGui を被せた共通ウィジェット `draw_clock_controls` と共通テレメトリ行 `draw_runner_telemetry`。全シーンの Control ウィンドウが使う |
 | `rate_meter.hpp`（vizcore）✅M1 | 受信 Snapshot レートの表示用メーター（0.25 s 窓 + 係数 0.2 の EMA）。時刻源を持たず壁時計を引数で受けるので単体テストできる（VIZ-05）。全パネルが 1 つずつ持つ |
@@ -312,9 +313,9 @@ M0 実測（GCC 13, -O3, Xeon 想定）：`push+pop ≈ 4.4 ns`、`StreamingMode
                                                                         → FBO → ImGui::Image
 ```
 
-* 頂点の x,y は固定（グリッド）。毎フレーム更新するのは z と法線のみ → `glBufferSubData`
-* カメラは軌道カメラ（マウスドラッグ回転、ホイールでズーム）。ImPlot3D を採用する場合はこの層を差し替えるだけ
-* 大きなグリッドは ring ではなく **triple buffer** で「最新 1 枚」を渡す
+* 頂点の x,y は固定（グリッド）。更新するのは z と法線のみ（CPU で `SurfaceMesh::update_normals`、GPU へは `glBufferSubData`）。アップロードは新しい面が届いたときだけ
+* カメラは軌道カメラ（マウスドラッグ回転、ホイールでズーム、右ドラッグでパン、R でホーム）。レンダラは三角形のみ描く（ラインは 2D の ImPlot に任せる）
+* 大きなグリッドは ring ではなく **triple buffer** で「最新 1 枚」を渡す（`SurfaceModel` + `Runner::poll_surface`）。GL 関数のロードに失敗した環境では 3D ウィンドウは文言にフォールバックし、2D と Control は動き続ける
 
 ### 9.4 UI → Command 規約
 
