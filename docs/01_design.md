@@ -213,8 +213,8 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | `stats/optim.hpp` ✅M1 | Nelder–Mead / BFGS（数値勾配 + Armijo） | `nelder_mead` / `bfgs`（値返し）と `*_into`（`OptimResult` 再利用で割り当てなし）, `OptimOptions`, 制約変換 `to_unit` / `to_positive` | `path` は常に非空で `front == x0`, `back == x`。非有限な目的関数では `converged=false` |
 | `math/mat.hpp` ✅M1 | 固定サイズ行列（`std::array`、ヒープなし） | `Mat<R,C>`, `transpose`, `inverse()`→`optional`（≤3×3 閉形式、`tol` は行列式スケールに対する相対値）, `is_symmetric`, `is_psd` | POD。NaN は全述語で拒否 |
 | `stats/kalman.hpp` ✅M1 | 線形カルマン（固定サイズ） | `predict(F,Q)`, `update(H,z,R)`→イノベーション（事前残差）, `state`, `cov`, `reset`, `skipped_updates` | Joseph 形 + 明示的対称化で共分散は対称・半正定値。NaN 観測・特異 S は状態を壊さずスキップして数える（例外なし） |
-| `pricing/fdm_cn.hpp` 🔜M2 | Crank–Nicolson + PSOR（American） | `init(grid)`, `step_backward()`, `values()`, `exercise_boundary()` | American ≥ intrinsic、≥ European |
-| `math/tridiag.hpp` 🔜M2 | Thomas 法 | `solve(a,b,c,d)` | 密行列解と一致 |
+| `pricing/fdm_cn.hpp` ✅M2 | Crank–Nicolson + PSOR（American）、Rannacher 起動、キンクのセル平均化 | `init(grid, params)`, `step_backward()`（t=0 で no-op）, `values()`, `value_at`, `delta_at`, `exercise_boundary()`, `last_psor_iterations/converged` | American ≥ intrinsic、≥ European。2 次収束（比 ≈ 4）。割り当ては init だけ |
+| `math/tridiag.hpp` ✅M2 | Thomas 法 | `tridiag_solve(a,b,c,d,x,work)`（in-place 可、ゼロ・非有限ピボットで false） | 密行列解と一致（相対 1e-12） |
 | `micro/order_book.hpp` 🔜M3 | 板・マッチング | `submit(limit/market)`, `cancel`, `best_bid/ask`, `depth(N)` | bid<ask、価格時間優先、数量保存 |
 | `models/hawkes.hpp` 🔜M3 | 自己励起過程 | `simulate(thinning)`, `intensity(t)`, `log_likelihood` | 分岐比 α/β<1 |
 | `pricing/lsm.hpp` 🔜M4 | Longstaff–Schwartz | `price(paths, basis)` | ≥ European（MC 誤差内） |

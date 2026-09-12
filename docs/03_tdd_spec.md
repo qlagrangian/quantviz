@@ -319,26 +319,26 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| TRIDIAG-01 | n=5 で密行列解と一致（相対 1e-12） | N | ⬜ |
-| TRIDIAG-02 | 単位行列で x = d | U | ⬜ |
-| TRIDIAG-03 | n=1 が動く | U | ⬜ |
-| TRIDIAG-04 | 対角優位ランダム n=1000 の残差 ‖Ax−d‖ ≤ 1e-10 | N | ⬜ |
+| TRIDIAG-01 | n=5 で密行列解と一致（相対 1e-12） | N | ✅ |
+| TRIDIAG-02 | 単位行列で x = d | U | ✅ |
+| TRIDIAG-03 | n=1 が動く | U | ✅ |
+| TRIDIAG-04 | 対角優位ランダム n=1000 の残差 ‖Ax−d‖ ≤ 1e-10 | N | ✅ |
 
 ### 5.6 FDM — `core/pricing/fdm_cn.hpp`
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| FDM-01 | 格子 (S_max, N, M) と境界条件（S=0, S=S_max）が設定通り | U | ⬜ |
-| FDM-02 | CN European call が BS と一致（N=M=200、相対 1e-3） | N | ⬜ |
-| FDM-03 | N を 2 倍にすると誤差が約 1/4（収束次数 ≈ 2） | N | ⬜ |
-| FDM-04 | 格子上でプット・コール・パリティ（1e-3） | N | ⬜ |
-| FDM-05 | 格子から求めた Δ が BS Δ と一致（1e-2） | N | ⬜ |
-| FDM-06 | American put ≥ European put（全格子点） | P | ⬜ |
-| FDM-07 | American ≥ 本源的価値（全格子点） | P | ⬜ |
-| FDM-08 | q=0 の American call = European call（早期行使なし） | N | ⬜ |
-| FDM-09 | プットの行使境界 S*(t) は満期に向かって単調非減少 | P | ⬜ |
-| FDM-10 | PSOR が ω∈(1,2) で最大反復内に収束 | U | ⬜ |
-| FDM-11 | `step_backward` を M 回で t が T→0、以後は no-op | U | ⬜ |
+| FDM-01 | 格子 (S_max, N, M) と境界条件（S=0, S=S_max）が設定通り | U | ✅ |
+| FDM-02 | CN European call が BS と一致（N=M=200、相対 1e-3。K が格子点上なら 5e-5、格子点間なら 9e-4 — 線形補間の h²Γ/8） | N | ✅ |
+| FDM-03 | N を 2 倍にすると誤差が約 1/4（収束次数 ≈ 2。実測比 4.14 / 4.03。2 次はキンクのセル平均化で得る。Rannacher 起動は小さい M での Γ の振動抑制を担い、FDM-05 の節で守る） | N | ✅ |
+| FDM-04 | 格子上でプット・コール・パリティ（1e-3） | N | ✅ |
+| FDM-05 | 格子から求めた Δ が BS Δ と一致（1e-2） | N | ✅ |
+| FDM-06 | American put ≥ European put（全格子点） | P | ✅ |
+| FDM-07 | American ≥ 本源的価値（全格子点） | P | ✅ |
+| FDM-08 | q=0 の American call = European call（早期行使なし） | N | ✅ |
+| FDM-09 | プットの行使境界 S*(t) は満期に向かって単調非減少 | P | ✅ |
+| FDM-10 | PSOR が ω∈(1,2) で最大反復内に収束 | U | ✅ |
+| FDM-11 | `step_backward` を M 回で t が T→0、以後は no-op | U | ✅ |
 
 ### 5.7 FDMSCENE — `scenes/fdm_american_model.hpp`
 
