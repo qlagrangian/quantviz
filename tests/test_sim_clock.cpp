@@ -57,6 +57,28 @@ TEST_CASE("CLOCK-05: request_step advances exactly one step even while paused", 
     c.request_step();
     c.request_step();
     CHECK(c.due_steps(0.0) == 3);  // 複数リクエストは加算
+
+    // R12（RUNNER-12）用: 直近の due_steps() の返値のうち request_step() 由来が何本かを Runner に教える
+    SECTION("last_pending reports how many of the steps just returned came from request_step") {
+        auto d = make(1000.0, 1.0, 10000, /*paused=*/true);
+        CHECK(d.last_pending() == 0);  // まだ due_steps を呼んでいない
+        d.request_step();
+        d.request_step();
+        CHECK(d.due_steps(5.0) == 2);
+        CHECK(d.last_pending() == 2);  // 一時停止中は全ステップが request_step 由来
+        CHECK(d.due_steps(5.0) == 0);
+        CHECK(d.last_pending() == 0);  // 直近の呼び出しの値。持ち越さない
+
+        auto e = make(1000.0);  // 走行中は壁時計ぶん（1）と pending（1）の合計
+        e.request_step();
+        CHECK(e.due_steps(0.001) == 2);
+        CHECK(e.last_pending() == 1);
+
+        auto f = make(1000.0, 1.0, 3, /*paused=*/true);  // 上限で切られたら返値以下に丸める
+        for (int i = 0; i < 5; ++i) f.request_step();
+        CHECK(f.due_steps(0.0) == 3);
+        CHECK(f.last_pending() == 3);
+    }
 }
 
 TEST_CASE("CLOCK-06: request_step while running adds to the wall-clock steps", "[clock][unit]") {

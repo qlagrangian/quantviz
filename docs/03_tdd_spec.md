@@ -120,6 +120,8 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 | RUNNER-08 | `start()` は冪等。デストラクタは走行中スレッドを join する（ハングしない） | C | ✅ |
 | RUNNER-09 | `SurfaceModel` を満たす Model の Runner は `surface_every` ステップごとに面を `TripleBuffer` へ publish し、`poll_surface` は最新 1 枚だけを返す（古い面は捨てる）。非 SurfaceModel の Runner にはチャネルが生えない | U | ✅ |
 | RUNNER-10 | 一時停止中（その tick のステップ数が 0）に `Reset` / `SetParam` を適用したら、Snapshot（SurfaceModel なら面も）を 1 回 publish する。seq は再送でも減らない（Reset は 0 に戻す）。ステップがあった tick では追加の publish はしない | U | ✅ |
+| RUNNER-11 | Runner は各 step の所要時間を対数ビンのヒストグラム（atomic, relaxed）に記録し、描画側が読める。`measure_every` で k ステップに 1 サンプル。非計測設定では挙動不変 | U | ⬜ |
+| RUNNER-12 | 一時停止中の `StepOnce` で実行したステップは `publish_every` の位相に関わらず publish する（SurfaceModel なら面も）。走行中の間引きは変えない | U | ✅ |
 
 ### 3.4 GBM — `core/models/gbm.hpp` → `tests/test_gbm.cpp`
 
@@ -408,44 +410,44 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| LSM-01 | アンチセティック対の Z の和は厳密に 0 | U | ⬜ |
-| LSM-02 | American put 価格が CN（FDM-06 の設定）の 95 % CI 内 | S | ⬜ |
-| LSM-03 | 同パスの European MC 価格以上 | P | ⬜ |
-| LSM-04 | 基底数 2→5 で価格差が CI 内 | S | ⬜ |
-| LSM-05 | seed 固定で価格 bit 一致 | D | ⬜ |
-| LSM-06 | σ=0 で決定的ペイオフ | N | ⬜ |
-| LSM-07 | SE が 1/√N で減少（N を 4 倍で SE 半分、±20 %） | S | ⬜ |
-| LSMSCENE-01 | Model 契約充足、Snapshot（縮約パス K 本 + 分位帯, 継続価値フィット）は POD | K | ⬜ |
-| LSMSCENE-02 | 1 step = 1 時点の後ろ向き回帰 | U | ⬜ |
-| LSMSCENE-03 | 全時点処理後の価格 = `lsm` 単体 | D | ⬜ |
+| LSM-01 | アンチセティック対の Z の和は厳密に 0 | U | ✅ |
+| LSM-02 | American put 価格（N=20000, M=50, Laguerre 4）が CN（FDM-06 の設定）の 4 SE 内。Bermudan(50)+方策のバイアス −0.005（0.16 SE、400 seed 実測）。American プレミアム > 10 SE で「壊れた方策」は落ちる | S | ✅ |
+| LSM-03 | 同パスの European MC 価格以上 | P | ✅ |
+| LSM-04 | 基底数 2→5 で価格差が 4·√(SE₂²+SE₅²) 内（同一パスなので差はほぼバイアス +0.064±0.020。CI ではなく価格水準の頑健性バンド） | S | ✅ |
+| LSM-05 | seed 固定で価格・SE・パス・行使時点・分位が bit 一致。remaining()==1 の非自明なフィット（rank 3、係数非零）も bit 一致 | D | ✅ |
+| LSM-06 | σ=0 で決定的ペイオフ | N | ✅ |
+| LSM-07 | SE が 1/√N で減少（N を 4 倍で SE 半分、±20 %） | S | ✅ |
+| LSMSCENE-01 | Model 契約充足、Snapshot（16 本の縮約パス + 5 分位帯 65 点、保持された継続価値フィット、≈ 12 KB）は POD、seq は 0 から | K | ✅ |
+| LSMSCENE-02 | 1 step = 1 時点の後ろ向き回帰。t = 0 に達したら以後の step は保持（no-op） | U | ✅ |
+| LSMSCENE-03 | 全時点処理後の価格・SE・保持フィットが `Lsm` 単体と bit 一致（Reset 再生後も）。SetParam は seq 0 に巻き戻して価格が変わり、同値の SetParam は no-op | D | ✅ |
 
 ### 7.2 AC — `core/exec/almgren_chriss.hpp`, `scenes/exec_model.hpp`
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| AC-01 | 閉形式軌道 x_j = X·sinh(κ(T−t_j))/sinh(κT) と一致（相対 1e-10） | N | ⬜ |
-| AC-02 | Σ 取引量 = X（絶対 1e-9） | P | ⬜ |
-| AC-03 | λ=0 で線形（TWAP） | N | ⬜ |
-| AC-04 | λ 増大で前倒し（全内点で残量が小さくなる） | P | ⬜ |
-| AC-05 | 期待コスト・分散の閉形式が Monte Carlo と一致（4 SE） | S | ⬜ |
-| AC-06 | フロンティア: λ↑ でコスト↑・分散↓ | P | ⬜ |
-| AC-07 | κ = √(λσ²/η) の実装が定義と一致 | U | ⬜ |
-| ACSCENE-01 | Model 契約充足、Snapshot（λ 別軌道 固定 L 本, フロンティア格子）は POD | K | ⬜ |
-| ACSCENE-02 | SetParam(λ) で軌道が変わる | U | ⬜ |
-| ACSCENE-03 | （オプション）M3 の板に流したときの実現コストが期待コスト ± 4 SE | S | ⬜ |
+| AC-01 | 閉形式軌道 x_j = X·sinh(κ(T−t_j))/sinh(κT) と一致（相対 1e-10） | N | ✅ |
+| AC-02 | Σ 取引量 = X（絶対 1e-9） | P | ✅ |
+| AC-03 | λ=0 で線形（TWAP） | N | ✅ |
+| AC-04 | λ 増大で前倒し（全内点で残量が小さくなる） | P | ✅ |
+| AC-05 | 期待コスト・分散の閉形式が Monte Carlo と一致（4 SE） | S | ✅ |
+| AC-06 | フロンティア: λ↑ でコスト↑・分散↓ | P | ✅ |
+| AC-07 | κ が定義 cosh(κτ)−1 = κ̃²τ²/2 を満たす（asinh 形、λ=0 で厳密 0）。κT ≫ 700 でも軌道・コストが有限（sinh 比の溢れなし）、η̃ の床、`ac_cost_mc(n_sim=0)` = {0,0} | U | ✅ |
+| ACSCENE-01 | Model / SurfaceModel 契約充足。Snapshot（λ 梯子 8 本 × 64 点の軌道、フロンティア 32 点、5.7 KB）と Surface（64 × 32 の x(t, λ)、8.6 KB）は POD、全て有限、軌道は `ac_trajectory` と bit 一致 | K | ✅ |
+| ACSCENE-02 | SetParam(λ) で軌道と面が同時に変わり、同値の SetParam は何も変えず、step は t と seq だけを進める | U | ✅ |
+| ACSCENE-03 | （オプション・未実施）M3 の板に流したときの実現コストが期待コスト ± 4 SE。M4 では板と結線しない | S | ⬜ |
 
 ### 7.3 HJB — `core/exec/hjb_merton.hpp`, `scenes/hjb_model.hpp`
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| HJB-01 | CRRA で最適比率 π* = (μ−r)/(γσ²) が全 w で定数（1e-3） | N | ⬜ |
-| HJB-02 | 価値関数が w で凹 | P | ⬜ |
-| HJB-03 | 価値関数が w で単調増加 | P | ⬜ |
-| HJB-04 | 終端条件 V(w,T) = U(w) | U | ⬜ |
-| HJB-05 | 格子細分で解析解への誤差が減少 | N | ⬜ |
-| HJB-06 | 時間整合: T/2 から V(·,T/2) を終端として解いた結果 = 全区間解 | N | ⬜ |
-| HJBSCENE-01 | Model 契約充足、Snapshot（V(w) 固定格子, π*(w)）は POD | K | ⬜ |
-| HJBSCENE-02 | 1 step = 1 時間反復、SetParam(γ) で π* が変わる | U | ⬜ |
+| HJB-01 | CRRA で最適比率 π* = (μ−r)/(γσ²) が全 w で定数（1e-3。内側 90 % は実測 1.5e-5）。制約が効く場合（μ<r ⇒ π*=0、γ=0.1 ⇒ π*=kHjbPiMax）も制約付き閉形式と一致し、有限・単調 | N | ✅ |
+| HJB-02 | 価値関数が w で凹 | P | ✅ |
+| HJB-03 | 価値関数が w で単調増加 | P | ✅ |
+| HJB-04 | 終端条件 V(w,T) = U(w)。閉形式ヘルパ（`merton_fraction/value`、π を [0, kHjbPiMax] に制約）と `hjb_sanitize` が文書化された式・クランプに従う | U | ✅ |
+| HJB-05 | 格子細分で解析解への誤差が減少 | N | ✅ |
+| HJB-06 | 時間整合: T/2 から V(·,T/2) を終端として解いた結果 = 全区間解（γ ∈ {0.5, 1, 3}、`init(q, values())` の自己エイリアスも可） | N | ✅ |
+| HJBSCENE-01 | Model / SurfaceModel 契約充足。Snapshot（256 節点の w / V / π* / 解析 π* / 解析 V、10 KB）と Surface（200 × 200 の V(w,t)、行 0 = U(w)、未計算行 0、158 KB）は POD。掃引後の最終行と π* は `HjbMerton` 単体と bit 一致 | K | ✅ |
+| HJBSCENE-02 | 1 step = 1 時間反復（面が 1 行ずつ埋まり、残り 0 で保持）。SetParam(γ) は seq 0 に巻き戻し、掃引後の π* が新しい定数に 1e-3 で一致。同値は no-op | U | ✅ |
 
 ---
 

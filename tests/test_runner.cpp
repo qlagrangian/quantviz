@@ -350,17 +350,19 @@ TEST_CASE("RUNNER-10: a model command applied on a tick that runs no steps repub
     }
 
     SECTION("a SurfaceModel republishes the surface too, whatever the surface_every phase") {
-        RunnerConfig c  = paused;
+        // ここは走行中に 2 ステップ進めてから止める。一時停止中の StepOnce で進めると R12
+        //（手動ステップの最後の 1 歩は位相に関わらず publish）が先に面を出してしまい、
+        // 「位相外なのでまだ面が無い」という前提が作れない。
+        RunnerConfig c  = cfg(2.0);  // 壁 1 秒で 2 ステップ
         c.surface_every = 3;
         Runner<SurfaceCounterModel> r(SurfaceCounterModel{}, c);
-        REQUIRE(r.send(Command::step_once()));
-        REQUIRE(r.send(Command::step_once()));
         REQUIRE(r.tick(1.0) == 2);
         REQUIRE(drain(r).size() == 2);       // 2 ステップぶんの Snapshot は取り除いておく
         CHECK(r.surfaces_published() == 0);  // まだ 3 の倍数に達していない
         CounterSurface surf{};
         CHECK_FALSE(r.poll_surface(surf));
 
+        REQUIRE(r.send(Command::pause()));
         REQUIRE(r.send(Command::set_param(1, 1.0)));
         CHECK(r.tick(1.0) == 0);
         CHECK(r.surfaces_published() == 1);
@@ -368,5 +370,77 @@ TEST_CASE("RUNNER-10: a model command applied on a tick that runs no steps repub
         CHECK(surf.steps == 2);
         CHECK(surf.checksum == expected_checksum(2));
         CHECK(drain(r).size() == 1);
+    }
+}
+
+// --------------------------------------------------------------------------- M4: 手動ステップの見え方
+
+// R12: 一時停止中の StepOnce（pending ステップ）で進んだ tick は、最後のステップを publish_every /
+// surface_every の位相に関わらず publish する。走行中の間引きは変えない。
+TEST_CASE("RUNNER-12: steps taken from a paused StepOnce publish whatever the publish_every phase",
+          "[runner][unit]") {
+    RunnerConfig paused       = cfg(100.0, 4);  // publish_every = 4
+    paused.clock.start_paused = true;
+
+    SECTION("five StepOnce in five separate ticks publish five snapshots with seq 1..5") {
+        Runner<CounterModel> r(CounterModel{}, paused);
+        for (int i = 0; i < 5; ++i) {
+            REQUIRE(r.send(Command::step_once()));
+            CHECK(r.tick(1.0) == 1);
+        }
+        CHECK(r.total_steps() == 5);
+        const auto snaps = drain(r);
+        REQUIRE(snaps.size() == 5);
+        for (std::size_t i = 0; i < snaps.size(); ++i) CHECK(snaps[i].steps == i + 1);
+    }
+
+    SECTION("five StepOnce drained in one tick publish on the phase (4) and on the last step (5)") {
+        Runner<CounterModel> r(CounterModel{}, paused);
+        for (int i = 0; i < 5; ++i) REQUIRE(r.send(Command::step_once()));
+        CHECK(r.tick(1.0) == 5);
+        const auto snaps = drain(r);
+        REQUIRE(snaps.size() == 2);  // 4 は位相ぶん、5 は最後のステップぶん（重複は出さない）
+        CHECK(snaps[0].steps == 4);
+        CHECK(snaps[1].steps == 5);
+    }
+
+    SECTION("a last step that lands on the phase is published exactly once") {
+        Runner<CounterModel> r(CounterModel{}, paused);
+        for (int i = 0; i < 4; ++i) REQUIRE(r.send(Command::step_once()));
+        CHECK(r.tick(1.0) == 4);
+        const auto snaps = drain(r);
+        REQUIRE(snaps.size() == 1);
+        CHECK(snaps[0].steps == 4);
+    }
+
+    SECTION("a running clock keeps the publish_every decimation") {
+        Runner<CounterModel> r(CounterModel{}, cfg(100.0, 4));
+        CHECK(r.tick(0.1) == 10);  // 4, 8 の 2 枚だけ。10 は位相外なので出さない
+        const auto snaps = drain(r);
+        REQUIRE(snaps.size() == 2);
+        CHECK(snaps[0].steps == 4);
+        CHECK(snaps[1].steps == 8);
+    }
+
+    SECTION("a paused StepOnce republishes the surface off-phase too") {
+        RunnerConfig c  = paused;
+        c.surface_every = 4;
+        Runner<SurfaceCounterModel> r(SurfaceCounterModel{}, c);
+
+        REQUIRE(r.send(Command::step_once()));
+        CHECK(r.tick(1.0) == 1);
+        CHECK(r.surfaces_published() == 1);  // 位相（4 の倍数）に達していなくても出す
+        CounterSurface surf{};
+        REQUIRE(r.poll_surface(surf));
+        CHECK(surf.steps == 1);
+        CHECK(surf.checksum == expected_checksum(1));
+        CHECK(drain(r).size() == 1);
+
+        REQUIRE(r.send(Command::resume()));
+        CHECK(r.tick(0.1) == 10);            // steps 2..11 → 面は 4, 8 の 2 回だけ（走行中は間引く）
+        CHECK(r.surfaces_published() == 3);
+        REQUIRE(r.poll_surface(surf));
+        CHECK(surf.steps == 8);
+        CHECK(drain(r).size() == 2);
     }
 }

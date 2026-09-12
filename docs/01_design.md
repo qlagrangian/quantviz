@@ -158,13 +158,14 @@ struct Command { CommandType type; uint32_t param_id; double value; uint64_t see
 | R1 | `send()` は決してブロックしない。満杯なら false |
 | R2 | `poll()` は決してブロックしない。空なら false |
 | R3 | Command は**ステップの前**に消化される（同一 tick 内で適用→反映） |
-| R4 | Snapshot の `seq` は単調増加（`publish_every` の倍数） |
+| R4 | Snapshot の `seq` は走行中は単調増加（`publish_every` の倍数）。R10 の再送で同じ seq が繰り返されること、Reset で 0 に戻ること、R12 で位相外の seq が出ることは許す |
 | R5 | リング満杯時はコアを止めず、`dropped_snapshots()` に加算 |
 | R6 | `stop()` 後、`send()` が true を返していた Command は全て適用済み。`model()` を読んでも競合しない |
 | R7 | `start()` は冪等。デストラクタは join する |
 | R8 | `tick(elapsed)` は 1 ループ分の同期実行。`start()` 中に呼んではならない |
 | R9 | `SurfaceModel` の Runner は `surface_every` ステップごとに面を `TripleBuffer` へ publish し、`poll_surface` は最新 1 枚だけを返す（古い面は捨てる）。非 SurfaceModel の Runner にはチャネルが生えない（サイズ不変） |
 | R10 | ステップが 0 の tick でモデル系 Command（SetParam / Reset）を適用したら、Snapshot を 1 枚（SurfaceModel なら面も）publish する（間引きは掛けない）。ステップが走った tick では追加の publish をしない。seq は同じ値で再送されうる（Reset は 0 に戻す）→ R4 の「単調増加」は「減らない」の意味 |
+| R12 | 一時停止中の `StepOnce` で走ったステップは、その tick の最後のステップを `publish_every` / `surface_every` の位相に関わらず publish する（教材操作は 1 歩ごとに画面に出る）。走行中の間引きは変えない |
 
 ---
 
@@ -218,9 +219,10 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | `math/tridiag.hpp` ✅M2 | Thomas 法 | `tridiag_solve(a,b,c,d,x,work)`（in-place 可、ゼロ・非有限ピボットで false） | 密行列解と一致（相対 1e-12） |
 | `micro/order_book.hpp`, `micro/matching_engine.hpp` ✅M3 | 板（固定容量プール + 価格ティック配列 + intrusive FIFO）とマッチング | `submit_limit/submit_market`（fill は呼び手の span へ追記）, `cancel`, `best_bid/ask`, `depth(N)`, `check_invariants(full)`, `set_check_every` | bid<ask、価格時間優先、数量保存 `submitted == filled + cancelled + discarded + resting`。ヒープはコンストラクタでのみ（2.7 MB）。id は `reset()` をまたいで再利用される（再現性のため） |
 | `models/hawkes.hpp` ✅M3 | 自己励起過程 | `HawkesIntensity`（O(1) 逐次強度）, `hawkes_simulate`（Ogata thinning、割り当てなし）, `hawkes_log_likelihood`（O(n) 再帰 + 閉形式補償子）, `hawkes_fit` / `hawkes_fit_into`（softplus / sigmoid の無制約変換）, `hawkes_rescaled_residuals` | 分岐比 α/β<1 が変換で到達不能。時刻列は昇順・T 未満（Debug でアサート）。fit はオフライン専用（シーンの step から呼ばない） |
-| `pricing/lsm.hpp` 🔜M4 | Longstaff–Schwartz | `price(paths, basis)` | ≥ European（MC 誤差内） |
-| `exec/almgren_chriss.hpp` 🔜M4 | 最適執行 | `trajectory(X,T,λ,η,γ,σ)`, `frontier()` | Σ trades = X。λ=0 で TWAP |
-| `exec/hjb_merton.hpp` 🔜M4 | Merton HJB 数値解 | `solve(grid)`, `optimal_fraction(w)` | CRRA で定数比率 |
+| `math/linsolve.hpp` ✅M4 | 小規模密行列の LU（部分ピボット、n ≤ 16、ヒープなし） | `linsolve(n, a, b, piv, rel_tol)`（in-place。ピボットが相対 `rel_tol` 未満なら false） | LSM の正規方程式専用。特異なら false を返し、呼び手（`Lsm`）が先頭ブロックへのランク打ち切りを判断する |
+| `pricing/lsm.hpp` ✅M4 | Longstaff–Schwartz（American put/call。アンチセティック GBM パス、後ろ向き回帰を 1 時点ずつ手送り） | `Lsm{init(params), step_backward(), remaining(), current_step(), time(), result()→{price, std_error, european}, path(i), spots_at(k), quantile_at(k, q), exercise_step(i), continuation_coeffs(), continuation_value(S), last_itm_paths/last_fit_rank/last_fit_fallback}` | アンチセティック対の Z の和は厳密 0。回帰は ITM パスの割引後実現キャッシュフローに対して行う（Longstaff–Schwartz 2001）。基底は x = S/K の Power / Laguerre。正規方程式が特異（Laguerre-5 でピボット比 ~5e-14）なら先頭ブロックへランク打ち切り。SE はアンチセティック対平均を標本単位にとる（方策推定誤差は含まない）。割り当ては init だけ（20000 パス × 50 時点で 16 MB） |
+| `exec/almgren_chriss.hpp` ✅M4 | Almgren–Chriss 最適執行: 閉形式軌道、期待コスト・分散、効率フロンティア、MC 検算 | `AcParams`, `ac_sanitize`, `ac_kappa`（asinh 形）, `ac_trajectory(p, out)`, `ac_trades(p, out)`, `ac_cost(p)→{expected, variance}`, `ac_cost_mc(p, seed, n_sim)`, `ac_frontier(base, lambdas, out)` | Σ trades = X。λ = 0 で TWAP（κ は厳密に 0）。η̃ = η − γτ/2 は正の床。sinh 比は e^{a−b}(1−e^{−2a})/(1−e^{−2b}) で評価し、κT が大きくても有限（入口の `ac_sanitize` と合わせて「公開関数は常に有限値」）。全関数 noexcept・割り当てなし |
+| `exec/hjb_merton.hpp` ✅M4 | Merton HJB（CRRA）の数値解: 対数富裕度で陰的 Euler、遅延方策（1 スイープ）、M 行列、閉形式の Dirichlet 境界 | `HjbParams`, `hjb_sanitize`, `crra_utility`, `merton_kappa / merton_fraction / merton_value`（π を [0, kPiMax] に制約した閉形式）, `HjbMerton{init(p[, terminal]), step_backward(), remaining(), time(), wealth(), values(), optimal_fraction(), value_at(w)}` | π* = (μ−r)/(γσ²) が全 w で定数（内側 90 % で 1e-3、実測 ~1.5e-5）。V は w で凹・単調増加。空間 2 次・時間 1 次収束。制御と境界の κ は同じクランプ済み π_c から作る（不一致だと境界が誤った速さで成長し、面が非単調・非有限になり得る）。割り当ては init だけ |
 | `aad/tape.hpp` 🔜M5 | 随伴自動微分 | `Var`, `Tape::rewind`, `Tape::propagate` | 解析微分・バンプと一致 |
 
 ### 6.2 `bridge/`（std のみ）
@@ -247,7 +249,9 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | VolSurface ✅M2 | `VolSurfaceModel`（SurfaceModel） | Snapshot: t, SSVI パラメータ, k/T 範囲, seq（80 B）。Surface: 64×32 の IV 格子 + 軸（8.6 KB、TripleBuffer 経由。パラメータ変更時だけ再計算） | σ_atm, ρ, η, γ（`ssvi_clamp` でクランプ） |
 | Fdm ✅M2 | `FdmAmericanModel`（SurfaceModel） | Snapshot（6.3 KB）: 現在時刻の V(S) 256 点、反復ごとの S*（最大 256）、残り反復数、status（PSOR 未収束）、V(S0)・Δ(S0)、パラメータ。Surface（162 KB）: 200×200 の V(S,t)（満期側から埋まる、未計算行は 0）。1 step = 1 後ろ向き反復、SetParam は即座に `init` し直して seq を 0 に戻す | K, r, σ, q, American/European, Call/Put, ω（グリッドは固定: S_max = 4K, 200×200） |
 | Lob ✅M3 | `LobModel` | 上位 16 レベル bid/ask、直近 32 約定、λ_buy/λ_sell、mid/spread、数量保存カウンタ（submitted/filled/cancelled/discarded/rejected/truncated/clamped）、pending 注入、seq — 2.5 KB。板は `MatchingEngine<8192, 4096>`（mid ±2048 ティック。壁に当たると `orders_clamped` が増える）。買い・売りの独立な Hawkes 流（1 ms 窓ごとの thinning、割り当てなし）。取消確率は板の注文数に比例（プール飽和を防ぐ、板は 40〜70 注文で均衡） | μ, α, β（α/β ≤ 0.95 にクランプ）, 成行比率, 取消比率 [0.02, 0.9], 大口注入（買い/売り、次ステップ先頭で成行） |
-| Lsm / Exec / Hjb 🔜M4 | 各 Model | パス束の縮約, 執行軌道, 価値関数格子 | シーン固有 |
+| Lsm ✅M4 | `LsmModel` | Snapshot（12 KB、SnapCap 64）: 16 本の縮約パスと 5/25/50/75/95 % 帯（65 点、init で 1 回だけ計算）、現在時点・残り、部分価格 ± SE（掃引開始時は European MC、t = 0 で American）、European、行使済み本数、**保持された**継続価値フィット（係数・S 格子 64 点・rank・fallback・ITM 本数・属する時点）。1 step = 1 行使時点の後ろ向き回帰、t = 0 で保持。SetParam は即座に `Lsm::init`（同 seed でパス再生成、seq → 0）。ATM 既定では最終時点に ITM パスが無くフィットが消えるので、直近に回帰できた時点のフィットを保持して `fit_stale` で示す | K, σ, r, 基底（Power / Laguerre）, n_basis [1, 8], n_paths [256, 20000]（偶数）。スライダーはリリース時に送る（再 init が 9〜45 ms） |
+| Exec ✅M4 | `ExecModel`（SurfaceModel） | Snapshot（5.7 KB）: `AcParams`、現在 λ の軌道と E[C]/√V、λ 梯子 8 本（現在 λ の ±1.5 桁、対数等間隔）の軌道とコスト、固定格子 [1e-9, 1e-3] のフロンティア 32 点、再生ヘッド t（T で巻き戻る）。Surface（8.6 KB）: 64 × 32 の残量 x(t, λ)。`step` は t と seq だけ進め、SetParam はその場で全部再計算（seq は巻き戻さない）、面の再構築は次の `surface()` まで遅延（dirty フラグ） | λ, η（対数スライダー: ImGui の Logarithmic は範囲全体が ε 未満だと潰れるので log10 を線形に動かす）, γ, σ, T。クランプで κT ≲ 520 |
+| Hjb ✅M4 | `HjbModel`（SurfaceModel） | Snapshot（10 KB）: 256 節点の w / V / π* / 解析 π*（制約付き定数）/ 解析 V（同時刻の閉形式）、内側 90 % の max\|π − π*\|、反復・残り・t。Surface（158 KB）: 200 × 200 の V(w, t)、行 0 = U(w)、FDM シーンと同じ行↔レベル対応、列は節点の間引き、未計算行は 0。1 step = 1 時間反復。SetParam は即座に `init`（seq → 0）。\|γ − 1\| < 1e-4 は厳密に 1 へスナップ（対数効用分岐、桁落ち回避） | μ [−0.05, 0.3], r [0, 0.1], σ [0.05, 0.6], γ [0.2, 10]。パネルの 3D 高さは既定で符号付き log（V は負で 600 倍のレンジ）、未計算行は 0 ではなくスケール下端に描く（描画規約のみ） |
 | Aad 🔜M5 | `AadModel` | Greeks（AAD / バンプ）, 計算時間, テープ長 | 入力 |
 
 ### 6.4 `viz/`

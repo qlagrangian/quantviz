@@ -12,6 +12,11 @@
 //   Snapshot を 1 枚（SurfaceModel なら面も）publish する。一時停止中の操作が「次の Step まで
 //   画面に出ない」のを防ぐため。seq は同じ値で再送されうる（SetParam）し、Reset では 0 に戻る。
 //   描画側は「seq が**厳密に**減った or 0」を巻き戻しとして扱うこと（同じ seq の再送は巻き戻しではない）。
+// * R12（M4）: 一時停止中の StepOnce（SimClock::request_step() 由来の pending ステップ）で進んだ tick は、
+//   その tick の**最後のステップ**を publish_every / surface_every の位相に関わらず publish する。手動
+//   ステップは 1 回ずつ見せるための教材操作なので、間引きの位相のせいで画面が最大 publish_every−1
+//   ステップぶん遅れる（LOB シーンは publish_every = 4）のを防ぐ。位相にも当たっているステップを
+//   二重に出すことはない。走行中（非 pause）の間引きは一切変えない。
 // * Model が SurfaceModel を満たすときだけ「面チャネル」が生える（M2）。グリッド大の状態は履歴が
 //   不要なので、リングではなく TripleBuffer で最新 1 枚だけを渡す。満たさない Model では
 //   detail::SurfaceChannel が空の基底クラスになり、Runner のサイズも振る舞いも一切変わらない。
@@ -116,12 +121,16 @@ public:
     std::size_t tick(double elapsed_wall_seconds) {
         const std::size_t model_commands = drain_commands();
         const std::size_t n              = clock_.due_steps(elapsed_wall_seconds);
+        // R12: この tick のステップが一時停止中の StepOnce（pending）由来なら、最後の 1 歩は
+        // 間引きの位相に関わらず publish する。走行中は last_pending が混ざりうるので対象外。
+        const bool manual = clock_.paused() && clock_.last_pending() > 0;
         for (std::size_t i = 0; i < n; ++i) {
             model_.step(cfg_.dt);
-            const std::uint64_t s = steps_.fetch_add(1, std::memory_order_relaxed) + 1;
-            if (s % cfg_.publish_every == 0) publish();
+            const std::uint64_t s      = steps_.fetch_add(1, std::memory_order_relaxed) + 1;
+            const bool          forced = manual && (i + 1 == n);
+            if (s % cfg_.publish_every == 0 || forced) publish();
             if constexpr (SurfaceModel<M>) {
-                if (s % cfg_.surface_every == 0) publish_surface();
+                if (s % cfg_.surface_every == 0 || forced) publish_surface();
             }
         }
         // R10: ステップが 1 つも走らなかった tick でモデルが変わったなら、その場で 1 枚出す。

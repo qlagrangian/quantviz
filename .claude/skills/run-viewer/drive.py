@@ -14,7 +14,11 @@ Usage (all window coordinates are client-area pixels of the viewer window):
   drive.py quit                            kill the viewer started by `launch` (pid file), else every viewer
 
 Environment: QV_WID=0x<id> pins the window all commands act on (several agents, several viewers);
-QV_PID_FILE overrides the pid file used by launch/quit (default /tmp/quantviz_viz.pid).
+QV_PID_FILE overrides the pid file used by launch/quit (default /tmp/quantviz_viz.pid);
+QV_SEND=1 makes click/move/drag deliver synthetic events with XSendEvent addressed to QV_WID instead
+of XTest. XTest events go to whatever window is topmost under the pointer, so with several viewers
+stacked at the same position on one display they land on somebody else's viewer (and XRaiseWindow is
+ignored under XWayland). XSendEvent can only ever reach your own window. key/wheel stay XTest.
 
 Gotchas learned on WSLg: the X root window is black (rootless XWayland) so capture the
 window id, never :0; the first click on an unfocused window only focuses it — click a
@@ -105,20 +109,81 @@ def _need():
     if not f: sys.exit("viewer window not found (is it running? try: drive.py launch)")
     return f
 
+# ---------------------------------------------------------------------------- XSendEvent path (QV_SEND=1)
+# Synthetic ButtonPress/ButtonRelease/MotionNotify addressed to the pinned window. GLFW does not filter
+# send_event, and ImGui treats a motion with Button1Mask in `state` as a drag.
+class _XButtonEvent(ctypes.Structure):
+    _fields_ = [("type", ctypes.c_int), ("serial", ctypes.c_ulong), ("send_event", ctypes.c_int),
+                ("display", ctypes.c_void_p), ("window", ctypes.c_ulong), ("root", ctypes.c_ulong),
+                ("subwindow", ctypes.c_ulong), ("time", ctypes.c_ulong), ("x", ctypes.c_int), ("y", ctypes.c_int),
+                ("x_root", ctypes.c_int), ("y_root", ctypes.c_int), ("state", ctypes.c_uint),
+                ("button", ctypes.c_uint), ("same_screen", ctypes.c_int)]
+
+class _XMotionEvent(ctypes.Structure):
+    _fields_ = [("type", ctypes.c_int), ("serial", ctypes.c_ulong), ("send_event", ctypes.c_int),
+                ("display", ctypes.c_void_p), ("window", ctypes.c_ulong), ("root", ctypes.c_ulong),
+                ("subwindow", ctypes.c_ulong), ("time", ctypes.c_ulong), ("x", ctypes.c_int), ("y", ctypes.c_int),
+                ("x_root", ctypes.c_int), ("y_root", ctypes.c_int), ("state", ctypes.c_uint),
+                ("is_hint", ctypes.c_char), ("same_screen", ctypes.c_int)]
+
+class _XEvent(ctypes.Union):
+    _fields_ = [("type", ctypes.c_int), ("xbutton", _XButtonEvent), ("xmotion", _XMotionEvent),
+                ("pad", ctypes.c_long * 24)]
+
+_X.XSendEvent.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_long, ctypes.POINTER(_XEvent)]
+_MotionNotify, _ButtonPress, _ButtonRelease = 6, 4, 5
+_PointerMotionMask, _ButtonPressMask, _ButtonReleaseMask, _Button1Mask = 1 << 6, 1 << 2, 1 << 3, 1 << 8
+_SEND = os.environ.get("QV_SEND", "") not in ("", "0")
+
+def _xtime():
+    return int(time.time() * 1000) & 0xFFFFFFFF
+
+def _send_motion(w, x, y, state=0):
+    ox, oy = origin(w)
+    e = _XEvent(); e.type = _MotionNotify; m = e.xmotion
+    m.type, m.send_event, m.display, m.window, m.root = _MotionNotify, 1, _d, w, _root
+    m.subwindow, m.time, m.x, m.y, m.x_root, m.y_root = 0, _xtime(), x, y, ox + x, oy + y
+    m.state, m.same_screen = state, 1
+    _X.XSendEvent(_d, w, 0, _PointerMotionMask, ctypes.byref(e)); _X.XFlush(_d)
+
+def _send_button(w, x, y, press):
+    ox, oy = origin(w)
+    e = _XEvent(); e.type = _ButtonPress if press else _ButtonRelease; b = e.xbutton
+    b.type, b.send_event, b.display, b.window, b.root = e.type, 1, _d, w, _root
+    b.subwindow, b.time, b.x, b.y, b.x_root, b.y_root = 0, _xtime(), x, y, ox + x, oy + y
+    b.state, b.button, b.same_screen = (0 if press else _Button1Mask), 1, 1
+    _X.XSendEvent(_d, w, 0, _ButtonPressMask if press else _ButtonReleaseMask, ctypes.byref(e)); _X.XFlush(_d)
+
 def move(wx, wy):
-    w = _need()[0]; ox, oy = origin(w)
+    w = _need()[0]
+    if _SEND:
+        _send_motion(w, wx, wy); time.sleep(0.15); return
+    ox, oy = origin(w)
     _T.XTestFakeMotionEvent(_d, -1, ox + wx, oy + wy, 0); _X.XFlush(_d); time.sleep(0.15)
 
 def click(wx, wy, n=1, delay=0.3):
+    w = _need()[0]
     for _ in range(n):
         move(wx, wy)
-        _T.XTestFakeButtonEvent(_d, 1, 1, 0); _X.XFlush(_d); time.sleep(0.1)
-        _T.XTestFakeButtonEvent(_d, 1, 0, 0); _X.XFlush(_d); time.sleep(delay)
+        if _SEND:
+            _send_button(w, wx, wy, True); time.sleep(0.1)
+            _send_button(w, wx, wy, False); time.sleep(delay)
+        else:
+            _T.XTestFakeButtonEvent(_d, 1, 1, 0); _X.XFlush(_d); time.sleep(0.1)
+            _T.XTestFakeButtonEvent(_d, 1, 0, 0); _X.XFlush(_d); time.sleep(delay)
 
 def drag(x0, y0, x1, y1, steps=10):
+    w = _need()[0]
     move(x0, y0)
+    if _SEND:
+        _send_button(w, x0, y0, True); time.sleep(0.1)
+        for i in range(1, steps + 1):
+            x = x0 + (x1 - x0) * i // steps; y = y0 + (y1 - y0) * i // steps
+            _send_motion(w, x, y, _Button1Mask); time.sleep(0.04)
+        _send_button(w, x1, y1, False); time.sleep(0.3)
+        return
     _T.XTestFakeButtonEvent(_d, 1, 1, 0); _X.XFlush(_d); time.sleep(0.1)
-    w = _need()[0]; ox, oy = origin(w)
+    ox, oy = origin(w)
     for i in range(1, steps + 1):
         x = x0 + (x1 - x0) * i // steps; y = y0 + (y1 - y0) * i // steps
         _T.XTestFakeMotionEvent(_d, -1, ox + x, oy + y, 0); _X.XFlush(_d); time.sleep(0.03)

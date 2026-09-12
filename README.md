@@ -20,11 +20,11 @@
 | [docs/02_implementation_plan.md](docs/02_implementation_plan.md) | 実装計画書 — M0〜M5 のスコープ・タスク・完了条件・リスク |
 | [docs/03_tdd_spec.md](docs/03_tdd_spec.md) | TDD 仕様網羅 — 全モジュールの仕様を ID 付きテストケースとして列挙（M0 は実装済） |
 
-## M3（この時点）で動くもの
+## M4（この時点）で動くもの
 
 ![M0 viewer](docs/m0_viewer.png)
 
-メニューバーの **Scene** で 7 シーンを切り替える（同時に走るシーンは 1 つ）。3D 面は自前の OpenGL 3.0 レンダラ（FBO → `ImGui::Image`）。一時停止中でもスライダーと Reset は即座に画面に反映される（Runner が適用直後に Snapshot を再送）。
+メニューバーの **Scene** で 10 シーンを切り替える（同時に走るシーンは 1 つ）。3D 面は自前の OpenGL 3.0 レンダラ（FBO → `ImGui::Image`）。一時停止中でもスライダーと Reset は即座に画面に反映される（Runner が適用直後に Snapshot を再送）。
 
 | シーン | コア | 描画 |
 |---|---|---|
@@ -35,12 +35,15 @@
 | Vol surface（M2） | `vol_surface.hpp`（SSVI） | IV 面の 3D / スマイル断面 |
 | FDM American（M2） | `tridiag.hpp` + `fdm_cn.hpp`（CN + PSOR、Rannacher） | V(S,t) が満期から今へ育つ 3D 面（Pause → Step で 1 反復）/ V(S) / 行使境界 |
 | Order book（M3） | `micro/order_book.hpp` + `matching_engine.hpp`（固定容量、intrusive list、≈20 M 注文/秒）+ `hawkes.hpp` | 板深度ラダー / 価格×時間ヒートマップ / 約定と λ(t) / 「Inject buy/sell」で板が崩れて回復する |
+| LSM American（M4） | `pricing/lsm.hpp` + `math/linsolve.hpp`（Longstaff–Schwartz、アンチセティック、ランク打ち切り付き正規方程式） | 16 本のパス + 分位帯と現在時点の縦線 / 継続価値フィット vs 本源的価値と行使境界（Pause → Step で 1 行使時点ずつ回帰が進む）/ 価格 ± SE が European から American へせり上がる |
+| Optimal execution（M4） | `exec/almgren_chriss.hpp`（閉形式軌道・コスト・フロンティア、溢れなし sinh 比） | λ 別の執行軌道 + 再生ヘッド / 効率フロンティア上を動くマーカー / 残量 x(t, λ) の 3D 面 |
+| Merton HJB（M4） | `exec/hjb_merton.hpp`（対数富裕度の陰的 Euler、M 行列、制約付き閉形式境界） | V(w, t) が満期から育つ 3D 面 / V(w) 数値 vs 閉形式 / π*(w) が定数に乗る（誤差 1e-5） |
 
-- `core/`   : `Gbm`, `Welford`, `EwmaVariance`, `Rng`, `black_scholes`, `optim`, `garch`, `Mat`, `Kalman`, `tridiag`, `FdmCn`, `vol_surface`, `OrderBook`, `MatchingEngine`, `Hawkes`
+- `core/`   : `Gbm`, `Welford`, `EwmaVariance`, `Rng`, `black_scholes`, `optim`, `garch`, `Mat`, `Kalman`, `tridiag`, `FdmCn`, `vol_surface`, `OrderBook`, `MatchingEngine`, `Hawkes`, `linsolve`, `Lsm`, `almgren_chriss`, `HjbMerton`
 - `bridge/` : `SpscRing`, `TripleBuffer`, `Command`, `Model` / `SurfaceModel` concept, `SimClock`, `Runner`（面チャネル、R10 再送）
-- `scenes/` : 7 つの `Model`（すべて POD Snapshot）
-- `viz/`    : `SceneRegistry` / `RunnerScene`, 共通の時計 UI・`RateMeter`・`History` / `History2D`、`gl/`（行列・カメラ・メッシュ）、`src/gl/`（GL ローダ・レンダラ・`SurfaceView`）、7 パネル
-- `tests/`  : Catch2 v3, 179 テストケース + ベンチマーク 5 本（BENCH-01..05）
+- `scenes/` : 10 の `Model`（すべて POD Snapshot、4 つは SurfaceModel）
+- `viz/`    : `SceneRegistry` / `RunnerScene`, 共通の時計 UI・`RateMeter`・`History` / `History2D`、`gl/`（行列・カメラ・メッシュ）、`src/gl/`（GL ローダ・レンダラ・`SurfaceView`）、10 パネル
+- `tests/`  : Catch2 v3, 207 テストケース + ベンチマーク 5 本（BENCH-01..05）
 
 ## ビルド
 

@@ -4,7 +4,7 @@
 //   計算スレッド（Runner）      : 選択中のシーンの Model を steps_per_second で回す
 //   両者は Snapshot リングと Command リングだけで繋がる。
 //
-// シーンは SceneRegistry に登録し、メニューバーの "Scene" で切り替える。同時に走るシーンは 1 つ。
+// シーンは SceneRegistry に登録し、メニューバーの "Scene" で切り替える。同時に走るシーンは 1 つ（M4 で 10 シーン）。
 // 各シーンのウィンドウはメニューバー（高さ約 22 px）の下、y >= 32 に置く（各パネルの FirstUseEver 位置）。
 
 #include <cstddef>
@@ -21,11 +21,14 @@
 #include <implot.h>
 
 #include "gl/gl_loader.hpp"
+#include "panels/exec_panel.hpp"
 #include "panels/fdm_panel.hpp"
 #include "panels/garch_panel.hpp"
 #include "panels/greeks_panel.hpp"
+#include "panels/hjb_panel.hpp"
 #include "panels/kalman_panel.hpp"
 #include "panels/lob_panel.hpp"
+#include "panels/lsm_panel.hpp"
 #include "panels/streaming_panel.hpp"
 #include "panels/vol_surface_panel.hpp"
 #include "quantviz/viz/scene_registry.hpp"
@@ -112,6 +115,9 @@ int main() {
         registry.add("Vol surface", quantviz::viz::make_vol_surface_scene);
         registry.add("FDM American", quantviz::viz::make_fdm_scene);
         registry.add("Order book", quantviz::viz::make_lob_scene);
+        registry.add("LSM American", quantviz::viz::make_lsm_scene);
+        registry.add("Optimal execution", quantviz::viz::make_exec_scene);
+        registry.add("Merton HJB", quantviz::viz::make_hjb_scene);
         if (!registry.select(0)) {
             std::fprintf(stderr, "initial scene failed to start\n");
             return 1;
