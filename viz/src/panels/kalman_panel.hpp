@@ -46,7 +46,7 @@ private:
     History<kHistory> spread_;      ///< ヘッジ後スプレッド y − β̂ x
 
     scenes::KalmanPairSnapshot last_{};
-    std::uint64_t              prev_seq_ = 0;  ///< Reset をまたぐ古い Snapshot の検出用
+    std::uint64_t              prev_seq_ = 0;  ///< 巻き戻り検出用（seq が厳密に減ったら History を捨てる）
     std::uint64_t              received_ = 0;
     RateMeter                  rate_;  ///< 受信 Snapshot/秒（表示用）
 

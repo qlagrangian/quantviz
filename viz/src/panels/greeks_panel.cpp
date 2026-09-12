@@ -291,7 +291,7 @@ void GreeksPanel::draw_controls(Runner& runner) {
     ImGui::SetNextWindowPos(ImVec2(780, kPanelTop), ImGuiCond_FirstUseEver);
     ImGui::Begin("Control");
 
-    ImGui::SeparatorText("Option parameters (applied from the next step)");
+    ImGui::SeparatorText("Option parameters (applied immediately)");
     if (ImGui::SliderFloat("r (rate)", &r_, -0.05f, 0.15f, "%.4f"))
         runner.send(Command::set_param(GreeksModel::kRate, static_cast<double>(r_)));
     if (ImGui::SliderFloat("sigma (pricing vol)", &sigma_, 0.01f, 1.00f, "%.3f"))

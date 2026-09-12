@@ -37,7 +37,13 @@ add_executable(quantviz_tests
   test_tridiag.cpp
   test_fdm_cn.cpp
   test_vol_surface.cpp
-  test_fdm_scene.cpp)
+  test_fdm_scene.cpp
+  # ---- M3
+  test_order_book.cpp
+  bench_order_book.cpp
+  test_hawkes.cpp
+  test_history2d.cpp
+  test_lob_scene.cpp)
 
 target_link_libraries(quantviz_tests PRIVATE
   quantviz::core quantviz::bridge quantviz::scenes quantviz::vizcore quantviz::warnings

@@ -25,6 +25,7 @@
 #include "panels/garch_panel.hpp"
 #include "panels/greeks_panel.hpp"
 #include "panels/kalman_panel.hpp"
+#include "panels/lob_panel.hpp"
 #include "panels/streaming_panel.hpp"
 #include "panels/vol_surface_panel.hpp"
 #include "quantviz/viz/scene_registry.hpp"
@@ -110,6 +111,7 @@ int main() {
         registry.add("Kalman pair", quantviz::viz::make_kalman_scene);
         registry.add("Vol surface", quantviz::viz::make_vol_surface_scene);
         registry.add("FDM American", quantviz::viz::make_fdm_scene);
+        registry.add("Order book", quantviz::viz::make_lob_scene);
         if (!registry.select(0)) {
             std::fprintf(stderr, "initial scene failed to start\n");
             return 1;

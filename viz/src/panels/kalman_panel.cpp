@@ -36,16 +36,18 @@ void KalmanPanel::draw(Runner& runner) {
 void KalmanPanel::ingest(Runner& runner) {
     scenes::KalmanPairSnapshot s;
     while (runner.poll(s)) {
-        // Reset の時点でリングに積まれていた Snapshot は「古い seq」を持ったまま到着し、
-        // 巻き戻った 0 日目の点より先に描かれてしまう。seq が進まなかった＝巻き戻ったので、
-        // それまでに溜めた History を捨てる（clear_history() は prev_seq_ に触らない。
-        // 触ると古い方が残ってしまう）。last_ を差し替える前に呼ぶ。
-        if (s.seq != 0 && s.seq <= prev_seq_) clear_history();
-        last_ = s;
+        // seq が**厳密に**減ったら巻き戻り（Reset。その時点でリングに残っていた古い Snapshot も
+        // ここで捕まる）。それまでに溜めた History を捨てる。Reset の seq 0 もこの条件に入る。
+        // 比較が `<=` ではなく `<` なのは bridge の R10（一時停止中の SetParam は seq を据え置いた
+        // まま Snapshot を 1 枚出し直す）を巻き戻しと取り違えないため: 同じ seq の再送では
+        // History を消さず、新しいパラメータの点を足すだけにする（真値の参照線が「段」になる）。
+        // clear_history() は prev_seq_ に触らない（触ると古い方が残る）。last_ の差し替え前に呼ぶ。
+        if (s.seq < prev_seq_) clear_history();
+        const bool republish = (received_ > 0 && s.seq == prev_seq_);  // R10: 同じ seq の再送（telemetry だけ更新）
+        last_     = s;
+        prev_seq_ = s.seq;  // 巻き戻りを認める（Reset 直後は 0 に戻る）
         ++received_;
-        if (s.seq == 0) continue;  // Reset 直後の空スナップショットは描かない
-        prev_seq_ = s.seq;
-
+        if (s.seq == 0 || republish) continue;  // 未ステップの点と再送は History に積まない（重複点・偽の線分になる）
         const double days = s.t * kTradingDays;
         const double sd   = s.beta_var > 0.0 ? std::sqrt(s.beta_var) : 0.0;
         px_x_.push(days, s.x);
@@ -126,7 +128,7 @@ void KalmanPanel::draw_controls(Runner& runner) {
     ImGui::SetNextWindowPos(ImVec2(780, kPanelTop), ImGuiCond_FirstUseEver);
     ImGui::Begin("Control");
 
-    ImGui::SeparatorText("Model parameters (applied from the next step)");
+    ImGui::SeparatorText("Model parameters (applied immediately)");
     // ImGui のスライダーは float、Command は double。境界では明示的に広げる（clock_controls.hpp と同じ）。
     if (ImGui::SliderFloat("obs noise", &obs_noise_, 0.01f, 20.0f, "%.3f", ImGuiSliderFlags_Logarithmic))
         runner.send(Command::set_param(KalmanPairModel::kObsNoise, static_cast<double>(obs_noise_)));

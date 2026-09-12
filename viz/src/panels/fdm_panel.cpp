@@ -24,9 +24,10 @@ constexpr int kCurveCount = static_cast<int>(scenes::FdmSceneSnapshot::kCurve);
 /// V(S) プロットの X 範囲は [0, kSpotWindow · K]。S_max = 4K 全部を映すと、見たい K 周りが潰れる。
 constexpr double kSpotWindow = 2.5;
 
-// 待機表示。Reset / パラメータ変更のあと（一時停止中なら Step / Resume まで）全ウィンドウがこれを出す。
-constexpr const char* kWaitingSnapshot = "waiting for the next snapshot (Step or Resume) ...";
-constexpr const char* kWaitingSurface  = "waiting for the next surface (Step or Resume) ...";
+// 起動直後（まだ 1 枚も受け取っていない）の待機表示。Reset / パラメータ変更のあとは bridge の R10 が
+// 一時停止中でも 1 組を publish するので、ここには戻らない。
+constexpr const char* kWaitingSnapshot = "waiting for the first snapshot ...";
+constexpr const char* kWaitingSurface  = "waiting for the surface ...";
 
 /// 配当利回り q を持つ BS 価格。`bs_price` は q を取らないので S を e^{−qτ} 倍して渡す
 /// （d1 の中の log(S/K) が −qτ ぶん動き、前進項も S e^{−qτ} になるので厳密に一致する）。
@@ -66,8 +67,7 @@ void FdmPanel::ingest(Runner& runner) {
     bool got = false;
     Snap s;
     while (runner.poll(s)) {  // リングを空にして最新 1 枚だけを使う（このシーンに履歴は無い）
-        last_          = s;
-        have_snapshot_ = true;
+        last_ = s;
         ++received_;
         got = true;
     }
@@ -95,18 +95,6 @@ void FdmPanel::ingest(Runner& runner) {
 void FdmPanel::invalidate_surface() noexcept {
     have_surface_        = false;
     surface_.filled_rows = 0;
-}
-
-/// Reset / パラメータ変更を送った直後に呼ぶ。モデルは満期へ巻き戻るが、Runner が次の Snapshot を出すのは
-/// **次のステップ**なので、一時停止中は手元の Snapshot も面も古いまま残る。片方（面）だけ捨てると
-/// 「3D は waiting、2D とテレメトリは前回の掃引の値」という嘘の組み合わせになるので、両方まとめて捨てて
-/// 全ウィンドウを "waiting" に揃える。次の Step / Resume で新しい 1 枚が来たら通常表示に戻る。
-void FdmPanel::invalidate_view() noexcept {
-    invalidate_surface();
-    last_          = Snap{};
-    have_snapshot_ = false;
-    prev_iter_     = 0;
-    // received_ には触らない: RateMeter に渡す累計なので単調増加でなければならない（hpp のコメント）。
 }
 
 /// 本源的価値と European 参照。どちらも Snapshot が載せているパラメータ真値だけから決まる。
@@ -168,7 +156,7 @@ void FdmPanel::draw_surface() {
         return;
     }
 
-    if (!have_surface_ || !have_snapshot_) {
+    if (!have_surface_ || received_ == 0) {
         ImGui::TextDisabled("%s", kWaitingSurface);
         ImGui::End();
         return;
@@ -191,7 +179,7 @@ void FdmPanel::draw_curve() {
     ImGui::SetNextWindowPos(ImVec2(10, 442), ImGuiCond_FirstUseEver);
     ImGui::Begin("V(S) now");
 
-    if (!have_snapshot_) {
+    if (received_ == 0) {
         ImGui::TextDisabled("%s", kWaitingSnapshot);
         ImGui::End();
         return;
@@ -226,7 +214,7 @@ void FdmPanel::draw_boundary() {
     ImGui::SetNextWindowPos(ImVec2(395, 442), ImGuiCond_FirstUseEver);
     ImGui::Begin("Exercise boundary S*(t)");
 
-    if (!have_snapshot_) {
+    if (received_ == 0) {
         ImGui::TextDisabled("%s", kWaitingSnapshot);
         ImGui::End();
         return;
@@ -268,42 +256,35 @@ void FdmPanel::draw_controls(Runner& runner) {
     ImGui::Begin("Control");
 
     // パラメータを変えると掃引は満期からやり直しになる（PDE の途中で係数は差し替えられない）。
-    // 手元の面も別物になるので、送った時点で捨てる。
+    // 手元の面を先回りで捨てる必要は無い: R10 により一時停止中でも新しい Snapshot と面が 1 組
+    // 届き、iteration の巻き戻りを見て `ingest()` が古い面を捨てる（同じフレームで入れ替わる）。
     ImGui::SeparatorText("Contract (changing any of these restarts the sweep)");
     if (ImGui::SliderFloat("K (strike)", &strike_, 50.0f, 200.0f, "%.1f")) {
         runner.send(Command::set_param(FdmAmericanModel::kStrike, static_cast<double>(strike_)));
-        invalidate_view();
     }
     if (ImGui::SliderFloat("r (rate)", &r_, -0.05f, 0.20f, "%.4f")) {
         runner.send(Command::set_param(FdmAmericanModel::kRate, static_cast<double>(r_)));
-        invalidate_view();
     }
     if (ImGui::SliderFloat("sigma", &sigma_, 0.01f, 1.00f, "%.3f")) {
         runner.send(Command::set_param(FdmAmericanModel::kSigma, static_cast<double>(sigma_)));
-        invalidate_view();
     }
     if (ImGui::SliderFloat("q (dividend)", &q_, 0.0f, 0.20f, "%.4f")) {
         runner.send(Command::set_param(FdmAmericanModel::kDividend, static_cast<double>(q_)));
-        invalidate_view();
     }
     if (ImGui::Checkbox("American (early exercise)", &american_)) {
         runner.send(Command::set_param(FdmAmericanModel::kAmerican, american_ ? 1.0 : 0.0));
-        invalidate_view();
     }
     static const char* kTypeNames[] = {"Call", "Put"};
     if (ImGui::Combo("option type", &type_index_, kTypeNames, 2)) {
         runner.send(Command::set_param(FdmAmericanModel::kOptionType,
                                        static_cast<double>(type_index_)));
-        invalidate_view();
     }
     ImGui::BeginDisabled(!american_);  // ω は PSOR（American）でしか効かない
     if (ImGui::SliderFloat("omega (PSOR)", &omega_, 1.0f, 1.99f, "%.2f")) {
         runner.send(Command::set_param(FdmAmericanModel::kOmega, static_cast<double>(omega_)));
-        invalidate_view();
     }
     ImGui::EndDisabled();
-    // ここは Snapshot を読まない（Reset 直後は last_ が空なので「0 iterations」と嘘をつく）。
-    // 反復数は下の Telemetry の "iteration i / M" が出す。
+    // ここは Snapshot を読まない（反復数は下の Telemetry の "iteration i / M" が 1 か所で出す）。
     ImGui::TextDisabled("S_max = 4K;  1 Step = 1 backward iteration");
     ImGui::TextDisabled("surface %u x %u samples (the PDE grid is finer)",
                         static_cast<unsigned>(Surf::kS), static_cast<unsigned>(Surf::kT));
@@ -315,12 +296,13 @@ void FdmPanel::draw_controls(Runner& runner) {
     ImGui::SameLine();
     ImGui::TextDisabled("drag / wheel / R on the 3D image");
 
-    // Reset は掃引を満期へ巻き戻す。描画側の履歴は無いが、手元の面は次の面が来るまで無効。
-    draw_clock_controls(clock_, runner, [this] { invalidate_view(); });
+    // Reset は掃引を満期へ巻き戻す。このシーンに描画側の履歴は無く、巻き戻った Snapshot と面は
+    // R10 が次のフレームまでに届けるので、ここで捨てるものは無い。
+    draw_clock_controls(clock_, runner, [] {});
 
     ImGui::SeparatorText("Telemetry");
     draw_runner_telemetry(runner, last_.seq, rate_.per_second());
-    if (!have_snapshot_) {
+    if (received_ == 0) {
         ImGui::TextDisabled("%s", kWaitingSnapshot);
     } else {
         const double tau = std::max(0.0, last_.maturity - last_.t_remaining);

@@ -119,6 +119,7 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 | RUNNER-07 | スレッド実行で Snapshot の seq が単調増加。`stop()` 前に `send` が true を返した Command は `stop()` 後に必ず適用済み。`running()` が正しい | C | ✅ |
 | RUNNER-08 | `start()` は冪等。デストラクタは走行中スレッドを join する（ハングしない） | C | ✅ |
 | RUNNER-09 | `SurfaceModel` を満たす Model の Runner は `surface_every` ステップごとに面を `TripleBuffer` へ publish し、`poll_surface` は最新 1 枚だけを返す（古い面は捨てる）。非 SurfaceModel の Runner にはチャネルが生えない | U | ✅ |
+| RUNNER-10 | 一時停止中（その tick のステップ数が 0）に `Reset` / `SetParam` を適用したら、Snapshot（SurfaceModel なら面も）を 1 回 publish する。seq は再送でも減らない（Reset は 0 に戻す）。ステップがあった tick では追加の publish はしない | U | ✅ |
 
 ### 3.4 GBM — `core/models/gbm.hpp` → `tests/test_gbm.cpp`
 
@@ -225,7 +226,7 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 |---|---|---|---|
 | GREEKS-01 | Model 契約充足、Snapshot は POD（固定 N ストライク配列 + 固定格子） | K | ✅ |
 | GREEKS-02 | ストライク配列は昇順・等間隔、Snapshot 全要素が有限 | P | ✅ |
-| GREEKS-03 | SetParam(σ) は次ステップの Greeks に反映、seq は進まない | U | ✅ |
+| GREEKS-03 | SetParam(σ / r / T) は apply の場で Snapshot に反映され（配列と真値フィールドは同じパラメータで再計算、seq は進まない）、以後のステップでも維持される。未知 id は無視（M3 の R10 に合わせて「次ステップから」を改定） | U | ✅ |
 | GREEKS-04 | Γ の最大ストライクは S に最も近いストライク（±1 グリッド） | P | ✅ |
 | GREEKS-05 | 同 seed の素の Gbm と S が一致（dual-run） | D | ✅ |
 
@@ -357,46 +358,47 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| LOB-01 | 空の板は best bid / ask を持たない | U | ⬜ |
-| LOB-02 | 指値買いを入れると best bid になる | U | ⬜ |
-| LOB-03 | bid は価格降順、ask は昇順で列挙される | P | ⬜ |
-| LOB-04 | ランダム操作 1e5 回の後も best bid < best ask | P | ⬜ |
-| LOB-05 | 同価格では先に入った注文が先に約定（価格時間優先） | U | ⬜ |
-| LOB-06 | 部分約定で残数量が板に残る | U | ⬜ |
-| LOB-07 | 取消で注文が消え、最後の注文ならレベルも消える | U | ⬜ |
-| LOB-08 | 数量保存: 約定数量の買い合計 = 売り合計、板の数量 + 約定 = 投入 − 取消 | P | ⬜ |
-| LOB-09 | 成行は複数レベルを掃く | U | ⬜ |
-| LOB-10 | スプレッドを跨ぐ指値は攻撃的に約定し、残りが板に載る | U | ⬜ |
-| LOB-11 | 自己交差なし（板に bid ≥ ask が存在しない） | P | ⬜ |
-| LOB-12 | seed 固定フローで約定列が bit 一致 | D | ⬜ |
-| LOB-13 | `depth(N)` は上位 N レベルの (価格, 数量, 件数) | U | ⬜ |
-| LOB-14 | 注文プールはウォームアップ後にアロケーションしない。枯渇時は拒否を返す | U | ⬜ |
+| LOB-01 | 空の板は best bid / ask を持たない | U | ✅ |
+| LOB-02 | 指値買いを入れると best bid になる | U | ✅ |
+| LOB-03 | bid は価格降順、ask は昇順で列挙される | P | ✅ |
+| LOB-04 | ランダム操作 1e5 回の後も best bid < best ask | P | ✅ |
+| LOB-05 | 同価格では先に入った注文が先に約定（価格時間優先） | U | ✅ |
+| LOB-06 | 部分約定で残数量が板に残る | U | ✅ |
+| LOB-07 | 取消で注文が消え、最後の注文ならレベルも消える | U | ✅ |
+| LOB-08 | 数量保存: 約定数量の買い合計 = 売り合計、板の数量 + 約定 = 投入 − 取消 | P | ✅ |
+| LOB-09 | 成行は複数レベルを掃く | U | ✅ |
+| LOB-10 | スプレッドを跨ぐ指値は攻撃的に約定し、残りが板に載る | U | ✅ |
+| LOB-11 | 自己交差なし（板に bid ≥ ask が存在しない） | P | ✅ |
+| LOB-12 | seed 固定フローで約定列が bit 一致 | D | ✅ |
+| LOB-13 | `depth(N)` は上位 N レベルの (価格, 数量, 件数) | U | ✅ |
+| LOB-14 | 注文プールはウォームアップ後にアロケーションしない。枯渇時は拒否を返す | U | ✅ |
 
 ### 6.2 HAWKES — `core/models/hawkes.hpp`
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| HAWKES-01 | λ(t) = μ + Σ α e^{−β(t−tᵢ)} が手計算と一致 | N | ⬜ |
-| HAWKES-02 | λ(t) ≥ μ | P | ⬜ |
-| HAWKES-03 | thinning で生成した件数の平均 ≈ μT/(1−α/β)（4 SE） | S | ⬜ |
-| HAWKES-04 | 分岐比 α/β ≥ 1 は拒否 | U | ⬜ |
-| HAWKES-05 | seed 固定で事象列が一致 | D | ⬜ |
-| HAWKES-06 | 再帰 O(n) 対数尤度 = 直接 O(n²) 計算（相対 1e-10） | N | ⬜ |
-| HAWKES-07 | 補償子 ∫λ の閉形式が数値積分と一致（1e-8） | N | ⬜ |
-| HAWKES-08 | 5000 事象から MLE が (μ, α, β) を推定 SE の 4 倍以内で復元 | S | ⬜ |
-| HAWKES-09 | 時間再スケール残差の平均 ≈ 1（単位指数、4 SE） | S | ⬜ |
+| HAWKES-01 | λ(t) = μ + Σ α e^{−β(t−tᵢ)} が手計算と一致 | N | ✅ |
+| HAWKES-02 | λ(t) ≥ μ | P | ✅ |
+| HAWKES-03 | thinning で生成した件数の平均 ≈ μT/(1−α/β)（4 SE。定常近似。空履歴からの厳密な期待値 μ/(1−η)·[T − η(1−e^{−β(1−η)T})/(β(1−η))] とも 4 SE で照合。T=200, R=200） | S | ✅ |
+| HAWKES-04 | 分岐比 α/β ≥ 1 は拒否 | U | ✅ |
+| HAWKES-05 | seed 固定で事象列が一致 | D | ✅ |
+| HAWKES-06 | 再帰 O(n) 対数尤度 = 直接 O(n²) 計算（相対 1e-10） | N | ✅ |
+| HAWKES-07 | 補償子 ∫λ の閉形式が数値積分と一致（1e-8） | N | ✅ |
+| HAWKES-08 | 5000 事象から MLE が (μ, α, β) を推定 SE の 4 倍以内で復元 | S | ✅ |
+| HAWKES-09 | 時間再スケール残差の平均 ≈ 1（単位指数、4 SE） | S | ✅ |
 
 ### 6.3 LOBSCENE / HEAT
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| LOBSCENE-01 | Model 契約充足、Snapshot（上位 N レベル, 直近約定, λ）は POD | K | ⬜ |
-| LOBSCENE-02 | 「大口注入」Command で best ask が上がる（買い）／best bid が下がる（売り） | U | ⬜ |
-| LOBSCENE-03 | Snapshot の深度が板の `depth(N)` と一致（dual-run） | D | ⬜ |
-| LOBSCENE-04 | Reset で板が空・λ が μ に戻る | U | ⬜ |
-| HEAT-01 | 2D History（価格 × 時間）の寸法が固定、時間方向に循環 | U | ⬜ |
-| HEAT-02 | 循環後の列順が最古→最新 | U | ⬜ |
-| HEAT-03 | `clear` で全ゼロ | U | ⬜ |
+| LOBSCENE-01 | Model 契約充足、Snapshot（上位 N レベル, 直近約定, λ）は POD | K | ✅ |
+| LOBSCENE-02 | 「大口注入」Command で best ask が上がる（買い）／best bid が下がる（売り） | U | ✅ |
+| LOBSCENE-03 | Snapshot の深度が板の `depth(N)` と一致（dual-run） | D | ✅ |
+| LOBSCENE-04 | Reset で板が空・λ が μ に戻る | U | ✅ |
+| LOBSCENE-05 | シーンの逐次 thinning（1 ms 窓ごとに再開）で生成した到着数の平均が閉形式の期待値と一致（成行・取消 0 %、seed 固定、4 SE。α=0 の Poisson と η=0.5 の両方） | S | ✅ |
+| HEAT-01 | 2D History（価格 × 時間）の寸法が固定、時間方向に循環。`push_column` は Rows 未満の列を無視し、長い列は先頭 Rows 要素だけ使う | U | ✅ |
+| HEAT-02 | 循環後の列順が最古→最新 | U | ✅ |
+| HEAT-03 | `clear` で全ゼロ | U | ✅ |
 
 ---
 
@@ -488,7 +490,7 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 | BENCH-02 | StreamingModel step+snapshot | < 100 ns | M0 | ✅ 39 ns |
 | BENCH-03 | BS ストリップ SIMD vs スカラ（N=1024、厳密版: BS-10 で bit 一致） | ≥ 1.2×（改定） | M1 | ✅ 1.19〜1.28×（GCC 15, SSE2〜AVX-512） |
 | BENCH-04 | サーフェス 200×200 の z・法線更新 | < 2 ms | M2 | ✅ 0.22 ms（加重中心差分、GCC 15 -O3） |
-| BENCH-05 | マッチングエンジン 1e6 注文/秒（dropped 0） | ≥ 1e6/s | M3 | ⬜ |
+| BENCH-05 | マッチングエンジン 1e6 注文/秒（dropped 0） | ≥ 1e6/s | M3 | ✅ 19〜22 M 注文/秒（`MatchingEngine<65536,4096>`、70/10/20 混合、拒否 0） |
 | BENCH-06 | AAD 全 Greeks / 価格 1 回 | ≤ 5× | M5 | ⬜ |
 
 ---

@@ -90,7 +90,7 @@ CMake では各層を INTERFACE ライブラリ（`quantviz::core` 等）にし�
 1. 計算スレッドが `steps_per_second × speed` の速さで `step(dt)` を回し、`publish_every` ステップごとに Snapshot を push
 2. 描画スレッドはフレーム先頭で ring を**空になるまで** poll し、`History`（描画側の循環バッファ）に時系列として蓄える
 3. パネルは History と最新 Snapshot から描く
-4. UI の変化は即座に `Command` として送る。適用は「次のステップから」
+4. UI の変化は即座に `Command` として送る。モデルは `apply()` でパラメータを反映し、次のステップから効く。一時停止中は Runner が適用直後に Snapshot を 1 回再送する（R10）ので、Step を押さなくても画面に出る
 
 コアは「今の状態」しか吐かない。**時系列にするのは描画側の責務**。これによりコアの Snapshot は 1 枚分の固定長で済む。
 
@@ -164,6 +164,7 @@ struct Command { CommandType type; uint32_t param_id; double value; uint64_t see
 | R7 | `start()` は冪等。デストラクタは join する |
 | R8 | `tick(elapsed)` は 1 ループ分の同期実行。`start()` 中に呼んではならない |
 | R9 | `SurfaceModel` の Runner は `surface_every` ステップごとに面を `TripleBuffer` へ publish し、`poll_surface` は最新 1 枚だけを返す（古い面は捨てる）。非 SurfaceModel の Runner にはチャネルが生えない（サイズ不変） |
+| R10 | ステップが 0 の tick でモデル系 Command（SetParam / Reset）を適用したら、Snapshot を 1 枚（SurfaceModel なら面も）publish する（間引きは掛けない）。ステップが走った tick では追加の publish をしない。seq は同じ値で再送されうる（Reset は 0 に戻す）→ R4 の「単調増加」は「減らない」の意味 |
 
 ---
 
@@ -215,8 +216,8 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | `stats/kalman.hpp` ✅M1 | 線形カルマン（固定サイズ） | `predict(F,Q)`, `update(H,z,R)`→イノベーション（事前残差）, `state`, `cov`, `reset`, `skipped_updates` | Joseph 形 + 明示的対称化で共分散は対称・半正定値。NaN 観測・特異 S は状態を壊さずスキップして数える（例外なし） |
 | `pricing/fdm_cn.hpp` ✅M2 | Crank–Nicolson + PSOR（American）、Rannacher 起動、キンクのセル平均化 | `init(grid, params)`, `step_backward()`（t=0 で no-op）, `values()`, `value_at`, `delta_at`, `exercise_boundary()`, `last_psor_iterations/converged` | American ≥ intrinsic、≥ European。2 次収束（比 ≈ 4）。割り当ては init だけ |
 | `math/tridiag.hpp` ✅M2 | Thomas 法 | `tridiag_solve(a,b,c,d,x,work)`（in-place 可、ゼロ・非有限ピボットで false） | 密行列解と一致（相対 1e-12） |
-| `micro/order_book.hpp` 🔜M3 | 板・マッチング | `submit(limit/market)`, `cancel`, `best_bid/ask`, `depth(N)` | bid<ask、価格時間優先、数量保存 |
-| `models/hawkes.hpp` 🔜M3 | 自己励起過程 | `simulate(thinning)`, `intensity(t)`, `log_likelihood` | 分岐比 α/β<1 |
+| `micro/order_book.hpp`, `micro/matching_engine.hpp` ✅M3 | 板（固定容量プール + 価格ティック配列 + intrusive FIFO）とマッチング | `submit_limit/submit_market`（fill は呼び手の span へ追記）, `cancel`, `best_bid/ask`, `depth(N)`, `check_invariants(full)`, `set_check_every` | bid<ask、価格時間優先、数量保存 `submitted == filled + cancelled + discarded + resting`。ヒープはコンストラクタでのみ（2.7 MB）。id は `reset()` をまたいで再利用される（再現性のため） |
+| `models/hawkes.hpp` ✅M3 | 自己励起過程 | `HawkesIntensity`（O(1) 逐次強度）, `hawkes_simulate`（Ogata thinning、割り当てなし）, `hawkes_log_likelihood`（O(n) 再帰 + 閉形式補償子）, `hawkes_fit` / `hawkes_fit_into`（softplus / sigmoid の無制約変換）, `hawkes_rescaled_residuals` | 分岐比 α/β<1 が変換で到達不能。時刻列は昇順・T 未満（Debug でアサート）。fit はオフライン専用（シーンの step から呼ばない） |
 | `pricing/lsm.hpp` 🔜M4 | Longstaff–Schwartz | `price(paths, basis)` | ≥ European（MC 誤差内） |
 | `exec/almgren_chriss.hpp` 🔜M4 | 最適執行 | `trajectory(X,T,λ,η,γ,σ)`, `frontier()` | Σ trades = X。λ=0 で TWAP |
 | `exec/hjb_merton.hpp` 🔜M4 | Merton HJB 数値解 | `solve(grid)`, `optimal_fraction(w)` | CRRA で定数比率 |
@@ -240,12 +241,12 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | シーン | Model | Snapshot の主内容 | Param |
 |---|---|---|---|
 | Streaming ✅ | `StreamingModel` | t, spot, log_return, Welford 平均/分散, EWMA 分散, μ/σ 真値, seq | mu, sigma, ewma_lambda |
-| Greeks ✅M1 | `GreeksModel` | S（GBM, 経路ボラは固定）, 64 ストライクの price/Δ/Γ/ν/Θ/ρ（`bs_price_strip` の SIMD 経路を本番使用）, Γ(S,T) 48×32 格子（r/σ/T が変わった時だけ再計算）, 真値 r/σ/T, seq — 16.5 KB（M1 の例外、SnapCap 256） | スポットショック（×倍率, 非正・非有限は無視）, r, 価格ボラ σ, T, ストライク幅 |
+| Greeks ✅M1 | `GreeksModel` | S（GBM, 経路ボラは固定）, 64 ストライクの price/Δ/Γ/ν/Θ/ρ（`bs_price_strip` の SIMD 経路を本番使用）, Γ(S,T) 48×32 格子（r/σ/T が変わった時だけ再計算）, 真値 r/σ/T, seq — 16.5 KB（M1 の例外、SnapCap 256） | スポットショック（×倍率, 非正・非有限は無視）, r, 価格ボラ σ, T, ストライク幅（いずれも apply の場で反映、R10 で一時停止中も画面に出る） |
 | Garch ✅M1 | `GarchModel` | 合成 GARCH の r_t と σ²_t 真値、ローリング窓（既定 500 日、10 ステップごとに `garch_fit_into` で warm-start 再推定）の推定 σ²・(ω̂,α̂,β̂)・対数尤度、尤度面 L(α,β) 32×32（ω=ω̂ の断面、非定常点は有限最小値にクランプ）、最適化軌跡（先頭から等間引きで最大 64 点、終点 = 推定値）、seq — 9.8 KB（M1 の例外、SnapCap 256）。窓を広げた直後は埋まるまで推定を出さない | ω, α, β（真値。α+β ≥ kMax なら比を保って縮小）, optimizer（NM / BFGS）, 窓長 [50, 2048] |
 | Kalman ✅M1 | `KalmanPairModel` | x, y（y = β_t x + ε）, β 真値, β̂, β 分散, スプレッド（事後残差）, イノベーション（事前残差）, skipped（縮退観測のスキップ数）, seq — 96 B | 観測ノイズ, 状態ノイズ, 真の β（β_t は κ=0.002 で真値へ平均回帰するランダムウォーク。フィルタは F=1 を仮定する意図的な軽い誤特定） |
 | VolSurface ✅M2 | `VolSurfaceModel`（SurfaceModel） | Snapshot: t, SSVI パラメータ, k/T 範囲, seq（80 B）。Surface: 64×32 の IV 格子 + 軸（8.6 KB、TripleBuffer 経由。パラメータ変更時だけ再計算） | σ_atm, ρ, η, γ（`ssvi_clamp` でクランプ） |
 | Fdm ✅M2 | `FdmAmericanModel`（SurfaceModel） | Snapshot（6.3 KB）: 現在時刻の V(S) 256 点、反復ごとの S*（最大 256）、残り反復数、status（PSOR 未収束）、V(S0)・Δ(S0)、パラメータ。Surface（162 KB）: 200×200 の V(S,t)（満期側から埋まる、未計算行は 0）。1 step = 1 後ろ向き反復、SetParam は即座に `init` し直して seq を 0 に戻す | K, r, σ, q, American/European, Call/Put, ω（グリッドは固定: S_max = 4K, 200×200） |
-| Lob 🔜M3 | `LobModel` | 上位 N レベル bid/ask, 直近約定, λ(t) | 到着率, Hawkes α/β, 大口注入 |
+| Lob ✅M3 | `LobModel` | 上位 16 レベル bid/ask、直近 32 約定、λ_buy/λ_sell、mid/spread、数量保存カウンタ（submitted/filled/cancelled/discarded/rejected/truncated/clamped）、pending 注入、seq — 2.5 KB。板は `MatchingEngine<8192, 4096>`（mid ±2048 ティック。壁に当たると `orders_clamped` が増える）。買い・売りの独立な Hawkes 流（1 ms 窓ごとの thinning、割り当てなし）。取消確率は板の注文数に比例（プール飽和を防ぐ、板は 40〜70 注文で均衡） | μ, α, β（α/β ≤ 0.95 にクランプ）, 成行比率, 取消比率 [0.02, 0.9], 大口注入（買い/売り、次ステップ先頭で成行） |
 | Lsm / Exec / Hjb 🔜M4 | 各 Model | パス束の縮約, 執行軌道, 価値関数格子 | シーン固有 |
 | Aad 🔜M5 | `AadModel` | Greeks（AAD / バンプ）, 計算時間, テープ長 | 入力 |
 
@@ -254,8 +255,10 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | モジュール | 責務 |
 |---|---|
 | `history.hpp`（vizcore） ✅ | 描画側の固定長循環履歴。ImPlot の `offset` 規約（満杯時 offset = 最古の index） |
+| `history2d.hpp`（vizcore） ✅M3 | 価格ビン × 時間列の固定寸法 2D 循環履歴。`ordered()` が最古→最新の row-major 配列（`PlotHeatmap` にそのまま渡せる）を 1 回のコピーで返す |
 | `panels/streaming_panel.*` ✅ | Spot / Volatility / Control の 3 ウィンドウ |
 | `main.cpp` ✅ | GLFW + ImGui + ImPlot の起動・フレームループ・終了 |
+| `panels/lob_panel.*` ✅M3 | 板深度ラダー（`PlotBars` 水平）、価格×時間ヒートマップ（`History2D<64,256>`、mid 追従ビン）、約定散布 + λ 履歴、Control（Hawkes パラメータ、比率、注入ボタン） |
 | `panels/{streaming,greeks,garch,kalman}_panel.*` ✅M1 | シーンごとに 1 パネル。`draw(Runner&)` + `make_<scene>_scene()`。共通部品は `panels/panel_common.hpp`（`now_seconds`, `kTradingDays`, `kPanelTop`, `setup_follow_axis`）と `viz/rate_meter.hpp`（受信レート EMA）。Reset 時は `prev_seq_` ガードでリング内の古い Snapshot を捨てる |
 | `gl/{math,camera,surface_mesh}.hpp`（vizcore）✅M2 | 列優先 `Mat4`、`look_at` / `perspective` / `inverse`、軌道カメラ `OrbitCamera`（project/unproject）、`SurfaceMesh`（N×M 格子 → 頂点 + 法線 + インデックス、z だけ更新・再確保なし、不等間隔軸でも 2 次精度の法線） |
 | `src/gl/{gl_loader,surface_renderer,surface_view}` ✅M2 | `glfwGetProcAddress` で GL 3.0 の 53 関数を自前ロード。FBO（DPI 対応）に Lambert + 高さ色 + 等高線で描き、`ImGui::Image` に貼る。`SurfaceView` がドラッグ回転・ホイールズーム・右ドラッグパン・R でリセット。`draw()` はアップロードしたかを返し、パネルは dirty フラグを sticky に扱う |
@@ -276,7 +279,7 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | 同期コスト | SPSC + acquire/release のみ。mutex・condvar なし | `BENCH-01`（目標 < 20 ns / push+pop） |
 | 描画とコアの分離 | vsync（60 fps）とコアの `steps_per_second` は独立。描画の遅延はコアに伝播しない（drop で吸収） | テレメトリ `dropped`, `queued` |
 | SIMD ✅M1 | Black–Scholes のストライク配列版で `std::experimental::simd`（無ければ AVX2 intrinsics、無ければスカラ）。スカラ版と **bit 一致**（`FP_FAST_FMA` に応じて両経路で同じ縮約を行う）。超越関数はレーンごとに libm を呼ぶため速度は ≈1.2×。高速近似版は M5 | `BS-10`, `BENCH-03` |
-| メモリ配置 🔜M2/M3 | FDM グリッドは連続配列（SoA）、板は価格レベル配列 + intrusive list | `BENCH-xx` |
+| メモリ配置 ✅M2/M3 | FDM グリッドは連続配列、板は価格レベル配列 + intrusive 双方向リスト + free list（32 bit index）。`OrderBook` 本体は 128 B、状態はコンストラクタで 1 回だけ確保 | `BENCH-04`（0.22 ms）, `BENCH-05`（≈ 20 M 注文/秒） |
 | 計測 🔜M5 | シーンごとの `step` 時間・フレーム時間・dropped をパフォーマンスパネルで常時表示。`perf` でキャッシュミス |  |
 
 M0 実測（GCC 13, -O3, Xeon 想定）：`push+pop ≈ 4.4 ns`、`StreamingModel::step + snapshot ≈ 39 ns`。
@@ -322,6 +325,9 @@ M0 実測（GCC 13, -O3, Xeon 想定）：`push+pop ≈ 4.4 ns`、`StreamingMode
 * スライダーは変更されたフレームだけ `send`。失敗（ring 満杯）は次のフレームで値が変わればまた送られるので握り潰してよい
 * Pause/Resume はトグルボタン 1 つ。`Step` は一時停止中のみ有効
 * Reset は `Command::reset()` を送り、同時に描画側の History を `clear()`
+* 一時停止中の SetParam / Reset も次のフレームで画面に出る（R10 の再 publish）。パネルの巻き戻りガードは
+  `seq < prev_seq_`（**厳密**に減ったときだけ History を捨てる）。同じ seq の再送は巻き戻しではないので
+  History は消さずに点を足し、`seq == 0` の 1 枚は History に積まない（0 日目への偽の線分になるため）
 
 ### 9.5 フレーム予算
 

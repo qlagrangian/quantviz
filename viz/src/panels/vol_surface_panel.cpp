@@ -177,7 +177,7 @@ void VolSurfacePanel::draw_controls(Runner& runner) {
     ImGui::SetNextWindowPos(ImVec2(780, kPanelTop), ImGuiCond_FirstUseEver);
     ImGui::Begin("Control");
 
-    ImGui::SeparatorText("SSVI parameters (applied from the next step)");
+    ImGui::SeparatorText("SSVI parameters (applied immediately)");
     if (ImGui::SliderFloat("sigma_atm", &sigma_atm_, 0.05f, 1.00f, "%.3f"))
         runner.send(Command::set_param(VolSurfaceModel::kSigmaAtm, static_cast<double>(sigma_atm_)));
     if (ImGui::SliderFloat("rho (skew)", &rho_, -0.95f, 0.95f, "%.3f"))
@@ -188,9 +188,8 @@ void VolSurfacePanel::draw_controls(Runner& runner) {
         runner.send(Command::set_param(VolSurfaceModel::kGamma, static_cast<double>(gamma_)));
     // 式と判定は Control の幅で折り返す（ウィンドウを細くしても切れないように）。
     ImGui::PushTextWrapPos(0.0f);
-    // 面が publish されるのはステップしたときだけなので、一時停止中はスライダーを動かしても
-    // Step を押すまで絵が変わらない（Snapshot も同様）。それを言っておく。
-    if (clock_.paused) ImGui::TextDisabled("paused: press Step to redraw the surface");
+    // 一時停止中でもスライダーを動かせば bridge の R10 が Snapshot と面を 1 組出し直すので、
+    // 次のフレームで絵が変わる（M3 以前は Step を押すまで変わらなかった）。文言は不要。
     ImGui::TextDisabled("w(k,T) = th/2 (1 + rho x + sqrt((x + rho)^2 + 1 - rho^2)),  x = phi k");
     ImGui::TextDisabled("th = sigma_atm^2 T,  phi = eta / th^gamma");
 

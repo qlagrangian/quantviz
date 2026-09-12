@@ -31,15 +31,18 @@ void StreamingPanel::draw(Runner& runner) {
 void StreamingPanel::ingest(Runner& runner) {
     scenes::StreamingSnapshot s;
     while (runner.poll(s)) {
-        // Reset の時点でリングに積まれていた Snapshot は「古い seq」を持ったまま到着し、
-        // 巻き戻った 0 日目の点より先に描かれてしまう。seq が進まなかった＝巻き戻ったので、
-        // それまでに溜めた History を捨てる（clear_history() は prev_seq_ に触らない。
-        // 触ると古い方が残ってしまう）。last_ を差し替える前に呼ぶ。
-        if (s.seq != 0 && s.seq <= prev_seq_) clear_history();
-        last_ = s;
+        // seq が**厳密に**減ったら巻き戻り（Reset。その時点でリングに残っていた古い Snapshot も
+        // ここで捕まる）。それまでに溜めた History を捨てる。Reset の seq 0 もこの条件に入る。
+        // 比較が `<=` ではなく `<` なのは bridge の R10（一時停止中の SetParam は seq を据え置いた
+        // まま Snapshot を 1 枚出し直す）を巻き戻しと取り違えないため: 同じ seq の再送では
+        // History を消さず、新しいパラメータの点を足すだけにする（真値の参照線が「段」になる）。
+        // clear_history() は prev_seq_ に触らない（触ると古い方が残る）。last_ の差し替え前に呼ぶ。
+        if (s.seq < prev_seq_) clear_history();
+        const bool republish = (received_ > 0 && s.seq == prev_seq_);  // R10: 同じ seq の再送（telemetry だけ更新）
+        last_     = s;
+        prev_seq_ = s.seq;  // 巻き戻りを認める（Reset 直後は 0 に戻る）
         ++received_;
-        if (s.seq == 0) continue;  // Reset 直後の空スナップショットは描かない
-        prev_seq_         = s.seq;
+        if (s.seq == 0 || republish) continue;  // 未ステップの点と再送は History に積まない（重複点・偽の線分になる）
         const double days = s.t * kTradingDays;
         price_.push(days, s.spot);
         realised_vol_.push(days, s.var_return > 0.0 ? std::sqrt(s.var_return / dt_) : 0.0);
@@ -92,7 +95,7 @@ void StreamingPanel::draw_controls(Runner& runner) {
     ImGui::SetNextWindowPos(ImVec2(780, kPanelTop), ImGuiCond_FirstUseEver);
     ImGui::Begin("Control");
 
-    ImGui::SeparatorText("Model parameters (applied from the next step)");
+    ImGui::SeparatorText("Model parameters (applied immediately)");
     if (ImGui::SliderFloat("mu (annual drift)", &mu_, -0.5f, 0.5f, "%.3f"))
         runner.send(Command::set_param(StreamingModel::kMu, mu_));
     if (ImGui::SliderFloat("sigma (annual vol)", &sigma_, 0.0f, 1.0f, "%.3f"))
