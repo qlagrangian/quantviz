@@ -2,12 +2,15 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <memory>
+#include <span>
 #include <utility>
 
 #include <imgui.h>
 #include <implot.h>
 
+#include "gl/gl_loader.hpp"
 #include "panels/clock_panel.hpp"
 #include "panels/panel_common.hpp"
 
@@ -32,7 +35,13 @@ GreeksPanel::GreeksPanel(const scenes::GreeksModel::Config& initial, double init
       r_(static_cast<float>(initial.r)),
       sigma_(static_cast<float>(initial.sigma)),
       maturity_(static_cast<float>(initial.maturity)),
-      strike_span_(static_cast<float>(initial.strike_span)) {}
+      strike_span_(static_cast<float>(initial.strike_span)) {
+    // 初期視点: S 軸の手前・斜め上から。尾根（S = K）が奥行き方向に走って見える角度。R キーでここへ戻る。
+    view_.camera.distance = 3.0f;
+    view_.camera.yaw      = 0.85f;
+    view_.camera.pitch    = 0.50f;
+    view_.home            = view_.camera;
+}
 
 void GreeksPanel::draw(Runner& runner) {
     ingest(runner);
@@ -44,17 +53,69 @@ void GreeksPanel::draw(Runner& runner) {
 // ---------------------------------------------------------------- Snapshot 取り込み
 void GreeksPanel::ingest(Runner& runner) {
     scenes::GreeksSnapshot s;
+    bool                   got = false;
     while (runner.poll(s)) {
         // Streaming と違い seq == 0 の Snapshot も捨てずに採る: このシーンの配列はコンストラクタと
         // reset() で完全に埋まっており（軸・ストリップ・Γ 面すべて有限）、汚染される History も無い。
         // むしろ Reset 直後の 1 枚を採らないと、再開までパネルが古い状態を映し続けてしまう。
         last_ = s;
         ++received_;
+        got = true;
         // 他の 3 パネルの `prev_seq_` ガード（seq が巻き戻ったら History を捨てる）に相当する
         // 処理はここには無い: 描くのは常に最新の 1 枚だけで、Reset をまたいで溜まる状態が無い。
     }
 
     rate_.sample(received_, now_seconds());
+
+    // Γ 面の再構築は「変わったときだけ」。Snapshot は毎ステップ（100 /s）流れてくるが、
+    // gamma_surface は (r, sigma, T) にしか依存せず、Model 側もこの 3 つが動いたときだけ
+    // 張り直す（`GreeksModel::commit_pending`）。同じ判定をここでも行い、100 回/秒の
+    // 転置 + 法線 + VBO 更新を避ける。Reset は 3 つを保つので面は同じ = 上げ直し不要。
+    if (!got) return;
+    if (surf_valid_ && last_.r == surf_r_ && last_.sigma == surf_sigma_ && last_.T == surf_T_) return;
+    rebuild_mesh();
+}
+
+// ---------------------------------------------------------------- Γ 格子 → SurfaceMesh
+void GreeksPanel::rebuild_mesh() {
+    for (std::size_t i = 0; i < Snap::kGridS; ++i) mesh_xs_[i] = static_cast<float>(last_.grid_s[i]);
+    for (std::size_t j = 0; j < Snap::kGridT; ++j) mesh_ys_[j] = static_cast<float>(last_.grid_t[j]);
+
+    // [iS][iT]（Snapshot）→ [iT][iS]（SurfaceMesh は index = iy * n_x + ix）。
+    // z 範囲はデータから取る。sigma = 0 など縮退した設定で非有限が混じっても面を黒く落とさないよう、
+    // 非有限は 0 に潰す（`set_z` は有限であることを前提にしており、Debug では assert で落ちる）。
+    float lo    = 0.f;
+    float hi    = 0.f;
+    bool  first = true;
+    for (std::size_t j = 0; j < Snap::kGridT; ++j) {
+        for (std::size_t i = 0; i < Snap::kGridS; ++i) {
+            float v = static_cast<float>(last_.gamma_surface[i * Snap::kGridT + j]);
+            if (!std::isfinite(v)) v = 0.f;
+            mesh_z_[j * Snap::kGridS + i] = v;
+            if (first) {
+                lo    = v;
+                hi    = v;
+                first = false;
+            } else {
+                lo = std::min(lo, v);
+                hi = std::max(hi, v);
+            }
+        }
+    }
+    // 平坦な面（全部同じ値）で高さ正規化が潰れないように、幅ゼロなら 1 だけ開けておく。
+    if (!(hi > lo)) hi = lo + 1.f;
+    z_min_ = lo;
+    z_max_ = hi;
+
+    mesh_.set_axes(std::span<const float>(mesh_xs_), std::span<const float>(mesh_ys_));
+    mesh_.set_z(std::span<const float>(mesh_z_));
+    mesh_.update_normals();
+
+    surf_r_     = last_.r;
+    surf_sigma_ = last_.sigma;
+    surf_T_     = last_.T;
+    surf_valid_ = true;
+    gpu_dirty_  = true;  // 実際の VBO 更新は 3D タブが描かれるフレームまで遅らせる
 }
 
 std::size_t GreeksPanel::atm_index() const noexcept {
@@ -70,7 +131,7 @@ std::size_t GreeksPanel::atm_index() const noexcept {
 
 // ---------------------------------------------------------------- Greeks vs K
 void GreeksPanel::draw_strip() {
-    ImGui::SetNextWindowSize(ImVec2(760, 360), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(760, 300), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(10, kPanelTop), ImGuiCond_FirstUseEver);
     ImGui::Begin("Greeks vs K");
 
@@ -114,11 +175,16 @@ void GreeksPanel::draw_strip() {
     ImGui::End();
 }
 
-// ---------------------------------------------------------------- Gamma(S, T) heatmap
+// ---------------------------------------------------------------- Gamma(S, T): 3D / heatmap
+// 同じ面を 2 通りに見せるだけなので、ウィンドウを増やさずタブで切り替える（M2 Task 8）。
+// 縦 760 px の画面で「ストリップ + 面 + Control」を並べると 3 段目は 200 px を切り、3D では
+// 尾根が潰れて読めない。タブなら 3D にウィンドウ 1 枚ぶんの高さを丸ごと渡せる。
 void GreeksPanel::draw_surface() {
-    ImGui::SetNextWindowSize(ImVec2(760, 320), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(ImVec2(10, 402), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Gamma(S, T) surface");
+    ImGui::SetNextWindowSize(ImVec2(760, 410), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(10, kPanelTop + 310), ImGuiCond_FirstUseEver);
+    // ホイールは 3D のズームに使うので、ウィンドウ側のスクロールには渡さない。
+    ImGui::Begin("Gamma(S, T) surface", nullptr,
+                 ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
     if (received_ == 0) {
         ImGui::TextDisabled("waiting for the first snapshot ...");
@@ -126,6 +192,56 @@ void GreeksPanel::draw_surface() {
         return;
     }
 
+    if (ImGui::BeginTabBar("##gsurface_tabs")) {
+        if (ImGui::BeginTabItem("3D")) {
+            draw_surface_3d();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("heatmap")) {
+            draw_surface_heatmap();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+
+    ImGui::End();
+}
+
+// ---------------------------------------------------------------- 「3D」タブ
+// GL が使えない環境（`gl_load()` 失敗・FBO を作れない等）でも viewer は落とさない。3D の中身が
+// テキストに落ちるだけで、heatmap タブも時計も Telemetry もそのまま動く。
+void GreeksPanel::draw_surface_3d() {
+    if (!glapi::gl_available()) {
+        ImGui::TextDisabled("OpenGL functions unavailable - the 3D view is disabled");
+        ImGui::TextDisabled("(gl_load() failed at startup; see stderr for the missing entry point)");
+        ImGui::TextDisabled("use the \"heatmap\" tab for the same surface in 2D");
+        return;
+    }
+
+    if (!renderer_.ready() && !init_tried_) {
+        init_tried_ = true;
+        if (!renderer_.init(Snap::kGridS, Snap::kGridT))
+            std::fprintf(stderr, "SurfaceRenderer::init failed: %s\n", renderer_.last_error().c_str());
+        gpu_dirty_ = true;  // 新しい VBO は空なので、初期化直後は必ず 1 回上げる
+    }
+    if (!renderer_.ready()) {
+        ImGui::TextDisabled("3D renderer unavailable:");
+        ImGui::TextWrapped("%s", renderer_.last_error().c_str());
+        return;
+    }
+
+    // `SurfaceView::draw` は「実際に upload したか」を返す（領域が小さすぎる等で描かなかった
+    // フレームは false）。下ろすのは true のときだけ: そうしないと、描けなかったフレームで
+    // 更新が永久に失われる。uploads_ もこの返値だけで数えるので、Telemetry の数字は
+    // 「VBO へ送った回数」そのものになる。
+    if (view_.draw(renderer_, mesh_, ImGui::GetContentRegionAvail(), z_min_, z_max_, gpu_dirty_)) {
+        gpu_dirty_ = false;
+        ++uploads_;
+    }
+}
+
+// ---------------------------------------------------------------- 「heatmap」タブ
+void GreeksPanel::draw_surface_heatmap() {
     // [iS][iT] → [row = T 降順][col = S 昇順]。ImPlot は row 0 を上端（bounds_max.y）に描くので、
     // row 0 に T_max を置くと T 軸が上向きになる。
     double vmax = 0.0;
@@ -164,8 +280,6 @@ void GreeksPanel::draw_surface() {
     ImGui::SameLine();
     ImPlot::ColormapScale("##gscale", 0.0, vmax, ImVec2(70, -1), "%.3f");
     ImPlot::PopColormap();
-
-    ImGui::End();
 }
 
 // ---------------------------------------------------------------- Controls → Command
@@ -173,7 +287,7 @@ void GreeksPanel::draw_controls(Runner& runner) {
     using bridge::Command;
     using scenes::GreeksModel;
 
-    ImGui::SetNextWindowSize(ImVec2(420, 690), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(420, 720), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(780, kPanelTop), ImGuiCond_FirstUseEver);
     ImGui::Begin("Control");
 
@@ -195,6 +309,13 @@ void GreeksPanel::draw_controls(Runner& runner) {
     if (ImGui::Button("Spot x0.95", ImVec2(100, 0)))
         runner.send(Command::set_param(GreeksModel::kSpotJump, 0.95));
 
+    ImGui::SeparatorText("3D view (Gamma tab)");
+    ImGui::SliderInt("contour lines", &view_.contour_lines, 0, 40);
+    ImGui::Checkbox("wireframe", &view_.wire);
+    if (ImGui::Button("Reset view", ImVec2(100, 0))) view_.camera = view_.home;
+    ImGui::SameLine();
+    ImGui::TextDisabled("drag / wheel / R on the 3D image");
+
     // Reset で消す History を持たないシーンなので on_reset は何もしない（次の Snapshot で全部入れ替わる）。
     draw_clock_controls(clock_, runner, [] {});
 
@@ -212,6 +333,13 @@ void GreeksPanel::draw_controls(Runner& runner) {
         ImGui::Text("ATM delta      %.6f", last_.delta[atm]);
         ImGui::Text("ATM vega/pt    %.6f", last_.vega[atm] * kVegaPerVolPoint);
         ImGui::Text("ATM theta/day  %.6f", last_.theta[atm] * kThetaPerDay);
+        // 面は (r, sigma, T) が動いたときだけ作り直して GPU へ上げる。Snapshot は毎ステップ
+        // 来るので、この数字が snapshots/s と一緒に伸びていたら間引きが壊れている。
+        ImGui::Text("uploads        %llu", static_cast<unsigned long long>(uploads_));
+        ImGui::Text("gamma z range  [%.4f, %.4f]", static_cast<double>(z_min_),
+                    static_cast<double>(z_max_));
+        ImGui::Text("surface grid   %zu x %zu  (%zu triangles)", Snap::kGridS, Snap::kGridT,
+                    mesh_.triangle_count());
     }
 
     ImGui::End();
