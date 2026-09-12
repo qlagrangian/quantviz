@@ -344,10 +344,10 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| FDMSCENE-01 | Model 契約充足、Snapshot（V(S) 固定 N, 行使境界, 残反復数, status）は POD | K | ⬜ |
-| FDMSCENE-02 | 1 `step` = 1 後ろ向き反復（残反復数が 1 減る） | U | ⬜ |
-| FDMSCENE-03 | M ステップ後の S0 における値 = `fdm_cn` 単体の価格 | D | ⬜ |
-| FDMSCENE-04 | Reset で満期ペイオフに戻る | U | ⬜ |
+| FDMSCENE-01 | Model 契約充足、Snapshot（V(S) 固定 N, 行使境界, 残反復数, status）は POD | K | ✅ |
+| FDMSCENE-02 | 1 `step` = 1 後ろ向き反復（残反復数が 1 減る） | U | ✅ |
+| FDMSCENE-03 | M ステップ後の S0 における値 = `fdm_cn` 単体の価格 | D | ✅ |
+| FDMSCENE-04 | Reset で満期ペイオフに戻る | U | ✅ |
 
 ---
 
