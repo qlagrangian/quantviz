@@ -6,6 +6,8 @@
 //   * 一時停止中は壁時間を蓄積しない → 再開時のバースト無し
 //   * request_step() は一時停止中でも 1 ステップだけ許す（デバッガの "step" と同じ）
 //   * max_steps_per_tick で spiral of death を防ぐ。超過分は捨てる（追いつこうとしない）
+//   * last_pending() は直近の due_steps() の返値のうち request_step() 由来が何本かを教える
+//     （Runner の R12: 一時停止中の手動ステップだけは間引きの位相を無視して publish する）
 //   * 時間源を外から渡すので単体テスト可能
 
 #include <cmath>
@@ -31,6 +33,7 @@ public:
 
         std::size_t steps = pending_;
         pending_          = 0;
+        last_pending_     = steps;
 
         if (!paused_) {
             accumulator_ += elapsed_wall_seconds * cfg_.speed * cfg_.steps_per_second;
@@ -41,6 +44,7 @@ public:
         if (steps > cfg_.max_steps_per_tick) {
             steps        = cfg_.max_steps_per_tick;
             accumulator_ = 0.0;  // 超過分は捨てる
+            if (last_pending_ > steps) last_pending_ = steps;  // 返値以下に保つ
         }
         return steps;
     }
@@ -52,6 +56,10 @@ public:
     void request_step() noexcept { ++pending_; }
     std::size_t pending_steps() const noexcept { return pending_; }
 
+    /// 直近の due_steps() が返したステップのうち、request_step() 由来（pending）の本数。
+    /// 常に直近の返値以下。due_steps() を呼ぶたびに上書きされる（持ち越さない）。
+    std::size_t last_pending() const noexcept { return last_pending_; }
+
     /// 負・NaN は 0 にクランプ。
     void set_speed(double speed) noexcept { cfg_.speed = (speed > 0.0) ? speed : 0.0; }
     double speed() const noexcept { return cfg_.speed; }
@@ -60,9 +68,10 @@ public:
 
 private:
     Config      cfg_;
-    bool        paused_      = false;
-    double      accumulator_ = 0.0;
-    std::size_t pending_     = 0;
+    bool        paused_       = false;
+    double      accumulator_  = 0.0;
+    std::size_t pending_      = 0;
+    std::size_t last_pending_ = 0;
 };
 
 }  // namespace quantviz::bridge

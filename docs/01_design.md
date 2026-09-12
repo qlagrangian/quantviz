@@ -158,13 +158,14 @@ struct Command { CommandType type; uint32_t param_id; double value; uint64_t see
 | R1 | `send()` は決してブロックしない。満杯なら false |
 | R2 | `poll()` は決してブロックしない。空なら false |
 | R3 | Command は**ステップの前**に消化される（同一 tick 内で適用→反映） |
-| R4 | Snapshot の `seq` は単調増加（`publish_every` の倍数） |
+| R4 | Snapshot の `seq` は走行中は単調増加（`publish_every` の倍数）。R10 の再送で同じ seq が繰り返されること、Reset で 0 に戻ること、R12 で位相外の seq が出ることは許す |
 | R5 | リング満杯時はコアを止めず、`dropped_snapshots()` に加算 |
 | R6 | `stop()` 後、`send()` が true を返していた Command は全て適用済み。`model()` を読んでも競合しない |
 | R7 | `start()` は冪等。デストラクタは join する |
 | R8 | `tick(elapsed)` は 1 ループ分の同期実行。`start()` 中に呼んではならない |
 | R9 | `SurfaceModel` の Runner は `surface_every` ステップごとに面を `TripleBuffer` へ publish し、`poll_surface` は最新 1 枚だけを返す（古い面は捨てる）。非 SurfaceModel の Runner にはチャネルが生えない（サイズ不変） |
 | R10 | ステップが 0 の tick でモデル系 Command（SetParam / Reset）を適用したら、Snapshot を 1 枚（SurfaceModel なら面も）publish する（間引きは掛けない）。ステップが走った tick では追加の publish をしない。seq は同じ値で再送されうる（Reset は 0 に戻す）→ R4 の「単調増加」は「減らない」の意味 |
+| R12 | 一時停止中の `StepOnce` で走ったステップは、その tick の最後のステップを `publish_every` / `surface_every` の位相に関わらず publish する（教材操作は 1 歩ごとに画面に出る）。走行中の間引きは変えない |
 
 ---
 
