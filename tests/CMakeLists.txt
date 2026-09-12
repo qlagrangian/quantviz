@@ -52,6 +52,7 @@ add_executable(quantviz_tests
   test_exec_scene.cpp
   test_hjb_scene.cpp
   # ---- M5
+  test_aad.cpp
   test_perf.cpp)
 
 target_link_libraries(quantviz_tests PRIVATE
