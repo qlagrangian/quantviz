@@ -165,6 +165,7 @@ struct Command { CommandType type; uint32_t param_id; double value; uint64_t see
 | R8 | `tick(elapsed)` は 1 ループ分の同期実行。`start()` 中に呼んではならない |
 | R9 | `SurfaceModel` の Runner は `surface_every` ステップごとに面を `TripleBuffer` へ publish し、`poll_surface` は最新 1 枚だけを返す（古い面は捨てる）。非 SurfaceModel の Runner にはチャネルが生えない（サイズ不変） |
 | R10 | ステップが 0 の tick でモデル系 Command（SetParam / Reset）を適用したら、Snapshot を 1 枚（SurfaceModel なら面も）publish する（間引きは掛けない）。ステップが走った tick では追加の publish をしない。seq は同じ値で再送されうる（Reset は 0 に戻す）→ R4 の「単調増加」は「減らない」の意味 |
+| R11 | Runner は step の所要時間を対数ビン（100 ns〜1 s を 32 ビン、ビン比 ≈ 1.655）のヒストグラムに relaxed atomic で記録し、描画側は `step_histogram().snapshot()` で「だいたいの姿」を読む。`measure_every = k` で k 連続ステップを 1 対の clock 読みで計り 1 サンプル（既定 16: 軽い step では clock 読みのバイアス ≈ 25 ns/k。µs 級のシーンは 1）。k > 1 では間の publish も窓に入る。`measure_every = 0` は計測コードが生成されない（テンプレート分岐）ので非計測時の挙動・コストは不変。`Command::reset` では消えず、`reset_step_histogram()` で消す（テレメトリ ≠ モデル状態）（RUNNER-11） |
 | R12 | 一時停止中の `StepOnce` で走ったステップは、その tick の最後のステップを `publish_every` / `surface_every` の位相に関わらず publish する（教材操作は 1 歩ごとに画面に出る）。走行中の間引きは変えない |
 
 ---
@@ -223,7 +224,8 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | `pricing/lsm.hpp` ✅M4 | Longstaff–Schwartz（American put/call。アンチセティック GBM パス、後ろ向き回帰を 1 時点ずつ手送り） | `Lsm{init(params), step_backward(), remaining(), current_step(), time(), result()→{price, std_error, european}, path(i), spots_at(k), quantile_at(k, q), exercise_step(i), continuation_coeffs(), continuation_value(S), last_itm_paths/last_fit_rank/last_fit_fallback}` | アンチセティック対の Z の和は厳密 0。回帰は ITM パスの割引後実現キャッシュフローに対して行う（Longstaff–Schwartz 2001）。基底は x = S/K の Power / Laguerre。正規方程式が特異（Laguerre-5 でピボット比 ~5e-14）なら先頭ブロックへランク打ち切り。SE はアンチセティック対平均を標本単位にとる（方策推定誤差は含まない）。割り当ては init だけ（20000 パス × 50 時点で 16 MB） |
 | `exec/almgren_chriss.hpp` ✅M4 | Almgren–Chriss 最適執行: 閉形式軌道、期待コスト・分散、効率フロンティア、MC 検算 | `AcParams`, `ac_sanitize`, `ac_kappa`（asinh 形）, `ac_trajectory(p, out)`, `ac_trades(p, out)`, `ac_cost(p)→{expected, variance}`, `ac_cost_mc(p, seed, n_sim)`, `ac_frontier(base, lambdas, out)` | Σ trades = X。λ = 0 で TWAP（κ は厳密に 0）。η̃ = η − γτ/2 は正の床。sinh 比は e^{a−b}(1−e^{−2a})/(1−e^{−2b}) で評価し、κT が大きくても有限（入口の `ac_sanitize` と合わせて「公開関数は常に有限値」）。全関数 noexcept・割り当てなし |
 | `exec/hjb_merton.hpp` ✅M4 | Merton HJB（CRRA）の数値解: 対数富裕度で陰的 Euler、遅延方策（1 スイープ）、M 行列、閉形式の Dirichlet 境界 | `HjbParams`, `hjb_sanitize`, `crra_utility`, `merton_kappa / merton_fraction / merton_value`（π を [0, kPiMax] に制約した閉形式）, `HjbMerton{init(p[, terminal]), step_backward(), remaining(), time(), wealth(), values(), optimal_fraction(), value_at(w)}` | π* = (μ−r)/(γσ²) が全 w で定数（内側 90 % で 1e-3、実測 ~1.5e-5）。V は w で凹・単調増加。空間 2 次・時間 1 次収束。制御と境界の κ は同じクランプ済み π_c から作る（不一致だと境界が誤った速さで成長し、面が非単調・非有限になり得る）。割り当ては init だけ |
-| `aad/tape.hpp` 🔜M5 | 随伴自動微分 | `Var`, `Tape::rewind`, `Tape::propagate` | 解析微分・バンプと一致 |
+| `aad/tape.hpp` ✅M5 | テープ式随伴自動微分（AAD） | `Tape{reserve, rewind, size, capacity, propagate(result, adjoints), push_leaf/unary/binary}`, `Var(Tape&, v)`, `Var::constant(v)`（テープ無しの定数 — `AadOps::splat` 用）, `+ − × ÷`（スカラ混在可）, `exp / log / sqrt / erfc / norm_cdf`（名前空間スコープの friend: `AadOps::log` が無修飾 `log(a)` で自己再帰しないため）, `Tape::kNoNode` | 記録はノード配列（SoA、親 ≤ 2 の index + 偏微分、32 B/ノード）への添字書きだけで `reserve` 以外は割り当てなし。容量超過は「記録失敗」（`kNoNode` が下流へ伝播、値の計算は double と bit 一致で続く、`propagate` は no-op）。`propagate` は結果ノードから 0 へ向かう 1 ループ、随伴 0 は飛ばす（0 × inf の NaN を作らない）。`norm_cdf(Var)` の値は `core::norm_cdf` と bit 一致（BS カーネルに載せる前提）。`Tape` はコピー・ムーブ不可（`Var` が生ポインタを持つ） |
+| `aad/bs_aad.hpp` 🔜M5 | BS Greeks on AAD | `AadOps`（`V = Var`）, `bs_greeks_aad(Tape&, S, K, T, r, σ, type)` → price / Δ / ν / ρ / Θ | 同じカーネル `bs_price_block<Ops>` を通るので価格・Δ は解析値と bit 一致 |
 
 ### 6.2 `bridge/`（std のみ）
 
@@ -271,6 +273,7 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | `rate_meter.hpp`（vizcore）✅M1 | 受信 Snapshot レートの表示用メーター（0.25 s 窓 + 係数 0.2 の EMA）。時刻源を持たず壁時計を引数で受けるので単体テストできる（VIZ-05）。全パネルが 1 つずつ持つ |
 | `panels/panel_common.hpp` ✅M1 | パネル共通の小物: `now_seconds()`, `kTradingDays`, `kPanelTop`（メニューバー下の初期 y）, `setup_follow_axis()`（最新点に追従する X 軸） |
 | `scene_registry.hpp`（vizcore）✅M1 | `Scene`（Runner + Panel の型消去）, `RunnerScene<M, Panel, SnapCap>`（唯一の具象、デストラクタで join）, `SceneRegistry`（名前→生成関数。`select` は前シーンを `stop()` してから破棄し、新シーンを `start()`）。`main.cpp` はメニューバーで切り替えるだけ。生きているシーンは常に高々 1 つ |
+| `perf.hpp`（vizcore）✅M5 | 性能表示の純関数: `FixedHistogram<N>`（[lo, hi) ビン、最後は閉、範囲外は端のビンへ、NaN は `dropped` に数える）, `percentile_sorted`（numpy の linear、空は NaN）, `Ema`（初回で初期化、NaN は無視、α ∉ (0,1] は 1 = 平滑化なし）, `dropped_ratio`（0/0 = 0）。ImGui 非依存（PERF-01..04） |
 
 ---
 

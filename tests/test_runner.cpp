@@ -1,11 +1,14 @@
 // RUNNER-xx — bridge/runner.hpp の仕様テスト。
-// 時間に依存しない tick() を主に使い、スレッド起動は 1 ケースだけ統合テストとして持つ。
+// 時間に依存しない tick() を主に使い、スレッド起動は統合テスト（RUNNER-07/08 と RUNNER-11 の
+// 最後の SECTION）だけに絞る。スレッドを使うケースは TSan の対象。
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <thread>
 #include <type_traits>
 #include <vector>
@@ -442,5 +445,184 @@ TEST_CASE("RUNNER-12: steps taken from a paused StepOnce publish whatever the pu
         REQUIRE(r.poll_surface(surf));
         CHECK(surf.steps == 8);
         CHECK(drain(r).size() == 2);
+    }
+}
+
+// --------------------------------------------------------------------------- M5: step 時間の計測
+
+namespace {
+
+/// 1 step が確実に測れる長さ（~50 us）かかる Model。計測の有無を実測で見分けるために使う。
+class SlowModel {
+public:
+    using Snapshot = CounterSnapshot;
+    void     step(double dt) {
+        std::this_thread::sleep_for(std::chrono::microseconds(50));
+        ++s_.steps;
+        s_.last_dt = dt;
+    }
+    Snapshot snapshot() const noexcept { return s_; }
+    void     apply(const Command&) {}
+
+private:
+    Snapshot s_{};
+};
+static_assert(Model<SlowModel>);
+
+std::uint64_t bin_sum(const StepHistogramSample& s) {
+    std::uint64_t sum = 0;
+    for (const std::uint64_t b : s.bins) sum += b;
+    return sum;
+}
+
+}  // namespace
+
+// RUNNER-11: step の所要時間を対数ビンのヒストグラム（atomic, relaxed）に記録する。measure_every = k は
+// 「k ステップを 1 サンプル（= elapsed/k ns per step）にまとめる」。k = 0 なら steady_clock を一切読まない。
+TEST_CASE("RUNNER-11: tick records one step-time sample per measure_every steps in a log histogram",
+          "[runner][unit]") {
+    STATIC_REQUIRE(kStepHistogramBins == 32);
+    // 32 ビン + count/total/max = 280 B。キャッシュラインを跨がないよう alignas してある。
+    STATIC_REQUIRE(alignof(StepHistogram) == kCacheLineSize);
+    STATIC_REQUIRE(sizeof(StepHistogram) % kCacheLineSize == 0);
+    STATIC_REQUIRE(sizeof(StepHistogram) >= 32 * sizeof(std::uint64_t) + 3 * sizeof(std::uint64_t));
+    STATIC_REQUIRE(std::is_trivially_copyable_v<StepHistogramSample>);
+
+    // 既定は 16（軽い step では clock 読みの下駄が 25/k ns になるため）。以下の SECTION は
+    // 既定値に依存しないよう measure_every を毎回明示する。
+    CHECK(RunnerConfig{}.measure_every == 16);
+
+    SECTION("measure_every = 1 records one sample per step") {
+        RunnerConfig c  = cfg(100.0);
+        c.measure_every = 1;
+        Runner<CounterModel> r(CounterModel{}, c);
+        CHECK(r.config().measure_every == 1);
+        CHECK(r.step_histogram().snapshot().count == 0);
+
+        CHECK(r.tick(1.0) == 100);
+        const auto s = r.step_histogram().snapshot();
+        CHECK(s.count == 100);
+        CHECK(bin_sum(s) == s.count);
+        CHECK(s.max_ns >= s.total_ns / s.count);  // 最大 >= 平均
+    }
+
+    SECTION("a 50 us step is timed: the totals are consistent and the sample lands above bin 0") {
+        RunnerConfig c  = cfg(100.0);
+        c.measure_every = 1;
+        Runner<SlowModel> r(SlowModel{}, c);
+        CHECK(r.tick(0.1) == 10);
+        const auto s = r.step_histogram().snapshot();
+        REQUIRE(s.count == 10);
+        CHECK(bin_sum(s) == 10);
+        CHECK(s.total_ns > 0);
+        CHECK(s.max_ns >= s.total_ns / s.count);
+        CHECK(s.max_ns >= 10'000);  // 50 us の sleep が 10 us 未満で返ることはない
+        CHECK(s.bins[0] == 0);      // 100 ns 未満のビンには入らない
+        CHECK(StepHistogram::bin_of(s.max_ns) >= StepHistogram::bin_of(10'000));
+    }
+
+    SECTION("measure_every = 4: 40 steps give 10 samples") {
+        RunnerConfig c  = cfg(100.0);
+        c.measure_every = 4;
+        Runner<CounterModel> r(CounterModel{}, c);
+        CHECK(r.tick(0.4) == 40);
+        const auto s = r.step_histogram().snapshot();
+        CHECK(s.count == 10);
+        CHECK(bin_sum(s) == 10);
+    }
+
+    SECTION("a group that the tick cannot fill is still recorded, divided by its real step count") {
+        RunnerConfig c  = cfg(100.0);
+        c.measure_every = 4;
+        Runner<CounterModel> r(CounterModel{}, c);
+        CHECK(r.tick(0.06) == 6);  // 4 + 端数 2
+        CHECK(r.step_histogram().snapshot().count == 2);
+        CHECK(r.tick(0.01) == 1);  // 端数だけの tick でも 1 サンプル（グループは tick を跨がない）
+        CHECK(r.step_histogram().snapshot().count == 3);
+    }
+
+    SECTION("measure_every = 0 leaves the histogram untouched and the stepping unchanged") {
+        RunnerConfig c  = cfg(100.0);
+        c.measure_every = 0;
+        Runner<SlowModel> r(SlowModel{}, c);
+        CHECK(r.tick(0.1) == 10);
+        const auto s = r.step_histogram().snapshot();
+        CHECK(s.count == 0);
+        CHECK(s.total_ns == 0);
+        CHECK(s.max_ns == 0);
+        CHECK(bin_sum(s) == 0);
+        // 計測を切っても step / publish の振る舞いは同じ
+        CHECK(r.total_steps() == 10);
+        CHECK(drain(r).size() == 10);
+    }
+
+    SECTION("the histogram is telemetry: Reset does not clear it, reset_step_histogram does") {
+        RunnerConfig c  = cfg(100.0);
+        c.measure_every = 1;
+        Runner<CounterModel> r(CounterModel{}, c);
+        CHECK(r.tick(0.1) == 10);
+        REQUIRE(r.step_histogram().snapshot().count == 10);
+
+        REQUIRE(r.send(Command::reset()));
+        CHECK(r.tick(0.05) == 5);
+        CHECK(r.model().snapshot().steps == 5);              // モデルは巻き戻る
+        CHECK(r.step_histogram().snapshot().count == 15);    // 計測は積み上がったまま
+
+        r.reset_step_histogram();
+        const auto s = r.step_histogram().snapshot();
+        CHECK(s.count == 0);
+        CHECK(s.total_ns == 0);
+        CHECK(s.max_ns == 0);
+        CHECK(bin_sum(s) == 0);
+    }
+
+    SECTION("bin_of and bin_lower_ns are inverse over a log sweep of 1 ns .. 1e10 ns") {
+        CHECK(StepHistogram::bin_lower_ns(0) == 100);  // ビン 0 の名目下端は 100 ns
+        // 上端は開いている（1 s 以上は全部最上位ビン）ので、上限の番号は「無限大」を返す
+        CHECK(StepHistogram::bin_lower_ns(kStepHistogramBins) == std::numeric_limits<std::uint64_t>::max());
+
+        for (std::size_t i = 0; i < kStepHistogramBins; ++i) {
+            // 表は 100 ns から 1 ビンあたり 10^(7/32) ≈ 1.655 倍（100 ns → 1 s を 32 ビン）
+            const double want = 100.0 * std::pow(10.0, 7.0 * static_cast<double>(i) / 32.0);
+            CHECK(StepHistogram::bin_lower_ns(i) == static_cast<std::uint64_t>(std::llround(want)));
+            if (i > 0) CHECK(StepHistogram::bin_lower_ns(i) > StepHistogram::bin_lower_ns(i - 1));
+            CHECK(StepHistogram::bin_of(StepHistogram::bin_lower_ns(i)) == i);
+            if (i > 1) CHECK(StepHistogram::bin_of(StepHistogram::bin_lower_ns(i) - 1) == i - 1);
+        }
+
+        for (int e = 0; e <= 100; ++e) {  // 10^0 .. 10^10 を 0.1 桁刻みで
+            const auto ns = static_cast<std::uint64_t>(std::llround(std::pow(10.0, 0.1 * e)));
+            const std::size_t b = StepHistogram::bin_of(ns);
+            REQUIRE(b < kStepHistogramBins);
+            // ビン 0 はアンダーフロー（100 ns 未満も飲み込む）ので、下側の関係はそこだけ成り立たない
+            if (ns >= StepHistogram::bin_lower_ns(0)) CHECK(StepHistogram::bin_lower_ns(b) <= ns);
+            CHECK(ns < StepHistogram::bin_lower_ns(b + 1));
+        }
+
+        CHECK(StepHistogram::bin_of(0) == 0);
+        CHECK(StepHistogram::bin_of(99) == 0);
+        CHECK(StepHistogram::bin_of(1'000'000'000ULL) == kStepHistogramBins - 1);      // 1 s
+        CHECK(StepHistogram::bin_of(1'000'000'000'000ULL) == kStepHistogramBins - 1);  // 1e12 も飽和
+    }
+
+    SECTION("the compute thread fills the histogram while this thread reads it (TSan)") {
+        // 既定の measure_every のまま回す。RUNNER-07 と同じく「条件が満たされるまで待つ」形に
+        // して、遅いマシンや TSan 下でも時間で落ちないようにする。
+        Runner<CounterModel> r(CounterModel{}, cfg(20000.0));
+        r.start();
+        StepHistogramSample mid{};
+        const auto          deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (mid.count == 0 && std::chrono::steady_clock::now() < deadline) {
+            mid = r.step_histogram().snapshot();  // 走行中の読みは relaxed（だいたいの姿）
+            CounterSnapshot s;
+            while (r.poll(s)) {}
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        r.stop();
+        REQUIRE(mid.count > 0);
+        const auto after = r.step_histogram().snapshot();
+        CHECK(after.count >= mid.count);       // 単調増加
+        CHECK(bin_sum(after) == after.count);  // 停止後なら厳密に一致する
+        CHECK(after.max_ns >= after.total_ns / after.count);
     }
 }

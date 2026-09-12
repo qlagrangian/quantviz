@@ -50,7 +50,9 @@ add_executable(quantviz_tests
   test_hjb_merton.cpp
   test_lsm_scene.cpp
   test_exec_scene.cpp
-  test_hjb_scene.cpp)
+  test_hjb_scene.cpp
+  # ---- M5
+  test_perf.cpp)
 
 target_link_libraries(quantviz_tests PRIVATE
   quantviz::core quantviz::bridge quantviz::scenes quantviz::vizcore quantviz::warnings

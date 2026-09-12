@@ -373,6 +373,7 @@ std::unique_ptr<Scene> make_lsm_scene() {
     run_cfg.clock.steps_per_second = 8.0;          // 1 ステップ = 1 時点。64 時点を 8 秒で見る速さ
     run_cfg.clock.speed            = 1.0;
     run_cfg.publish_every          = 1;
+    run_cfg.measure_every          = 1;  // 1 step が µs 級なので毎ステップ計測（R11: 既定 16 は軽い step 向け）
 
     return std::make_unique<RunnerScene<scenes::LsmModel, LsmPanel, kSnapCap>>(
         scenes::LsmModel{model_cfg}, run_cfg, std::in_place, model_cfg, run_cfg.clock.speed);

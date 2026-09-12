@@ -387,6 +387,7 @@ std::unique_ptr<Scene> make_hjb_scene() {
     run_cfg.clock.speed            = 1.0;
     run_cfg.publish_every          = 1;
     run_cfg.surface_every          = 1;
+    run_cfg.measure_every          = 1;  // 1 step が µs 級なので毎ステップ計測（R11: 既定 16 は軽い step 向け）
 
     // Panel は in-place 構築（面 + メッシュで 2 MB 超をスタックに積まない）。
     return std::make_unique<RunnerScene<scenes::HjbModel, HjbPanel, kSnapCap>>(
