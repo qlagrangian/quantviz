@@ -41,6 +41,13 @@ Pause → `Step` ×5 must raise `seq` by exactly 5; Resume must not burst.
 agent's viewer is on the same display, `export QV_WID=0x<your wid>` (and `QV_PID_FILE=/tmp/<you>.pid`
 before `launch`) so every command targets your window, never theirs.
 
+Pinning alone is not enough for **clicks**: XTest injects at the pointer, and the topmost window under it
+receives the event. Several viewers open at the same screen position, and XWayland ignores `XRaiseWindow`,
+so clicks silently land on a neighbour's viewer (M4 scene work lost Pause/Reset/Step clicks and had a
+checkbox toggled by a stranger this way). Set `QV_SEND=1` as well: `click`/`move`/`drag` then deliver
+synthetic events with `XSendEvent` addressed to `QV_WID`, which cannot reach any other window. `key` and
+`wheel` remain XTest (keyboard focus follows the last real click), so avoid them when sharing a display.
+
 ## Gotchas
 
 - **Root capture is black.** WSLg's XWayland is rootless; always capture by window id (the script does).
