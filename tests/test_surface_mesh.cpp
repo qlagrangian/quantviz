@@ -121,7 +121,7 @@ TEST_CASE("SURF-04: a flat plane z = const has every normal equal to (0,0,1)", "
     }
 }
 
-TEST_CASE("SURF-05: set_z does not reallocate — buffer pointers and sizes are stable",
+TEST_CASE("SURF-05: set_z does not reallocate - buffer pointers and sizes are stable",
           "[surf][unit]") {
     constexpr std::size_t kNx = 40, kNy = 25;
     SurfaceMesh           mesh(kNx, kNy);
