@@ -65,7 +65,7 @@
 | **M0** | 骨組み・Streaming | SpscRing, SimClock, Runner, Gbm, Welford, EWMA, StreamingModel, viewer 3 パネル, CI | ロックフリー SPSC、concept、jthread、POD 境界 | GBM 厳密解、逐次統計、EWMA の窓 | ✅ 完了 |
 | **M1** | 2D 理論パネル | Black–Scholes + Greeks（SIMD）, GARCH(1,1) MLE, Kalman ヘッジ比率, 共通 Control, シーン切替 | SIMD、固定サイズ行列テンプレート、最適化器の自作 | Γ の尖り、尤度面の谷、フィルタの追従 | ✅ 完了 |
 | **M2** | 3D サーフェス・FDM | OpenGL サーフェス描画（自作）, ボラ面, Thomas 法, Crank–Nicolson + PSOR, 行使境界, triple buffer | GL パイプライン、連続メモリ、三重対角 | American の早期行使境界、後ろ向き反復 | ✅ 完了 |
-| **M3** | マイクロストラクチャ | 板 + マッチングエンジン, Hawkes 生成・推定, 板深度ラダー, 価格×時間ヒートマップ | intrusive list、カスタムアロケータ、O(n) 再帰 | 価格時間優先、自己励起、板の崩れ | ⬜ |
+| **M3** | マイクロストラクチャ | 板 + マッチングエンジン, Hawkes 生成・推定, 板深度ラダー, 価格×時間ヒートマップ | intrusive list、カスタムアロケータ、O(n) 再帰 | 価格時間優先、自己励起、板の崩れ | ✅ 完了 |
 | **M4** | 動的処理 | LSM, Almgren–Chriss, Merton HJB, パス束・執行軌道・価値関数面 | パス並列、DP のメモリ設計 | 最適停止、執行のリスク回避、HJB | ⬜ |
 | **M5** | AAD・性能 | テープ式 AAD, Greeks 比較, パフォーマンスパネル, perf 連携 | 演算子オーバーロード、テープ設計、計測 | 逆伝播 1 回で全 Greeks | ⬜ |
 
@@ -163,7 +163,10 @@ M2 と M3 は独立に進められる。M4 は M2（FDM が LSM の参照解）�
 
 ---
 
-### M3 — マイクロストラクチャ（板・Hawkes）
+### M3 — マイクロストラクチャ（板・Hawkes）✅
+
+**実績（完了時点）** 7 シーン（+ Order book）。テスト 179 ケース（M2 の 147 + 32）、ASan/UBSan/TSan Green、`-Werror`。BENCH-05 は 1e6 混合注文で ≈ 20 M 注文/秒（目標 1 M）。板は独立参照実装との差分テスト 72 万操作で不一致ゼロ、Hawkes は分岐過程シミュレータと KS 検定で不偏性を確認。先行タスクとして bridge の R10（一時停止中の Reset / SetParam を即時 publish）を入れ、Greeks の SetParam を「apply の場で反映」に改定。計画からの逸脱: 取消確率を板の注文数に比例させる（固定比率だとプールが 30 秒で飽和）、板の価格範囲を ±2048 ティックに拡張し壁への到達を `orders_clamped` で可視化、Hawkes の推定 SE は Hessian ではなく実測に合わせて調整。M4 の先行タスクに RUNNER-12（StepOnce は publish_every の位相に関わらず publish）を積んだ。
+
 
 **タスク**
 
