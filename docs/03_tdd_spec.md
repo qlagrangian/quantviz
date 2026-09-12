@@ -395,9 +395,9 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 | LOBSCENE-02 | 「大口注入」Command で best ask が上がる（買い）／best bid が下がる（売り） | U | ⬜ |
 | LOBSCENE-03 | Snapshot の深度が板の `depth(N)` と一致（dual-run） | D | ⬜ |
 | LOBSCENE-04 | Reset で板が空・λ が μ に戻る | U | ⬜ |
-| HEAT-01 | 2D History（価格 × 時間）の寸法が固定、時間方向に循環 | U | ⬜ |
-| HEAT-02 | 循環後の列順が最古→最新 | U | ⬜ |
-| HEAT-03 | `clear` で全ゼロ | U | ⬜ |
+| HEAT-01 | 2D History（価格 × 時間）の寸法が固定、時間方向に循環。`push_column` は Rows 未満の列を無視し、長い列は先頭 Rows 要素だけ使う | U | ✅ |
+| HEAT-02 | 循環後の列順が最古→最新 | U | ✅ |
+| HEAT-03 | `clear` で全ゼロ | U | ✅ |
 
 ---
 
