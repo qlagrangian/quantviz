@@ -79,7 +79,7 @@ Everything except `quantviz_viz` is header-only and exposed as an INTERFACE libr
 Core and viewer talk only through two SPSC lock-free rings owned by `bridge::Runner<M>`:
 
 - **Snapshot ring (core → viz).** `Model::snapshot()` yields a fixed-size POD for the *current* state only. The viewer polls the ring empty at the start of each frame and appends to `viz::History<N>` circular buffers; building time series is the viewer's job, so a snapshot stays one cache line or two.
-- **Command ring (viz → core).** Widgets produce `bridge::Command`. Clock commands (Pause/Resume/StepOnce/SetSpeed) are applied by `Runner` to `SimClock`; model commands (SetParam/Reset) are forwarded to `Model::apply`. Commands are drained **before** stepping in each tick, so a change takes effect from the next step.
+- **Command ring (viz → core).** Widgets produce `bridge::Command`. Clock commands (Pause/Resume/StepOnce/SetSpeed) are applied by `Runner` to `SimClock`; model commands (SetParam/Reset) are forwarded to `Model::apply`. Commands are drained **before** stepping in each tick, so a change takes effect from the next step; if a tick applies a model command but runs no steps (paused), the Runner re-publishes the snapshot once so the change is visible immediately (R10).
 
 Panels are pure functions of the latest snapshot plus their own UI state. Thread count is exactly two: the compute thread (a `std::jthread` inside `Runner`) owns the `Model` and the `SimClock`.
 

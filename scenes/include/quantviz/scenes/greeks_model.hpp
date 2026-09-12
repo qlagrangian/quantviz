@@ -196,7 +196,7 @@ private:
         return (v < kMaxSpan) ? v : kMaxSpan;
     }
 
-    /// スポットショックは倍率として積み上げ、commit_pending()（apply の場、および step の先頭）で消費する。
+    /// スポットショックは commit_pending()（apply の場）で即座に消費する。2 回のショックは (S·a)·b と順に掛かる。
     void queue_spot_jump(double v) noexcept {
         if (v > 0.0 && std::isfinite(v)) jump_ *= v;
     }

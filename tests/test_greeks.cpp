@@ -177,6 +177,7 @@ TEST_CASE("GREEKS-03: SetParam(sigma) is reflected in the snapshot immediately w
         CHECK(s.sigma == 0.50);
         CHECK(s.spot == before.spot);  // スポットは動かない
         CHECK(s.gamma != before.gamma);
+        CHECK(s.gamma_surface != before.gamma_surface);  // 面も apply の場で張り直す（パネルの再アップロード条件）
         for (std::size_t i = 0; i < GreeksSnapshot::kStrikes; ++i) {
             const auto g = quantviz::core::bs_greeks(s.spot, s.strikes[i], s.T, s.r, s.sigma,
                                                      quantviz::core::OptionType::Call);

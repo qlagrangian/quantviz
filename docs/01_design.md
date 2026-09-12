@@ -90,7 +90,7 @@ CMake では各層を INTERFACE ライブラリ（`quantviz::core` 等）にし�
 1. 計算スレッドが `steps_per_second × speed` の速さで `step(dt)` を回し、`publish_every` ステップごとに Snapshot を push
 2. 描画スレッドはフレーム先頭で ring を**空になるまで** poll し、`History`（描画側の循環バッファ）に時系列として蓄える
 3. パネルは History と最新 Snapshot から描く
-4. UI の変化は即座に `Command` として送る。適用は「次のステップから」
+4. UI の変化は即座に `Command` として送る。モデルは `apply()` でパラメータを反映し、次のステップから効く。一時停止中は Runner が適用直後に Snapshot を 1 回再送する（R10）ので、Step を押さなくても画面に出る
 
 コアは「今の状態」しか吐かない。**時系列にするのは描画側の責務**。これによりコアの Snapshot は 1 枚分の固定長で済む。
 
@@ -255,6 +255,7 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | モジュール | 責務 |
 |---|---|
 | `history.hpp`（vizcore） ✅ | 描画側の固定長循環履歴。ImPlot の `offset` 規約（満杯時 offset = 最古の index） |
+| `history2d.hpp`（vizcore） ✅M3 | 価格ビン × 時間列の固定寸法 2D 循環履歴。`ordered()` が最古→最新の row-major 配列（`PlotHeatmap` にそのまま渡せる）を 1 回のコピーで返す |
 | `panels/streaming_panel.*` ✅ | Spot / Volatility / Control の 3 ウィンドウ |
 | `main.cpp` ✅ | GLFW + ImGui + ImPlot の起動・フレームループ・終了 |
 | `panels/{streaming,greeks,garch,kalman}_panel.*` ✅M1 | シーンごとに 1 パネル。`draw(Runner&)` + `make_<scene>_scene()`。共通部品は `panels/panel_common.hpp`（`now_seconds`, `kTradingDays`, `kPanelTop`, `setup_follow_axis`）と `viz/rate_meter.hpp`（受信レート EMA）。Reset 時は `prev_seq_` ガードでリング内の古い Snapshot を捨てる |

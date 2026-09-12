@@ -75,10 +75,11 @@ void GarchPanel::ingest(Runner& runner) {
         // History を消さず、新しいパラメータの点を足すだけにする（真値の参照線が「段」になる）。
         // clear_history() は prev_seq_ に触らない（触ると古い方が残る）。last_ の差し替え前に呼ぶ。
         if (s.seq < prev_seq_) clear_history();
+        const bool republish = (received_ > 0 && s.seq == prev_seq_);  // R10: 同じ seq の再送（telemetry だけ更新）
         last_     = s;
         prev_seq_ = s.seq;  // 巻き戻りを認める（Reset 直後は 0 に戻る）
         ++received_;
-        if (s.seq == 0) continue;  // まだ 1 歩も進んでいない点は History に積まない（偽の線分になる）
+        if (s.seq == 0 || republish) continue;  // 未ステップの点と再送は History に積まない（重複点・偽の線分になる）
         const double days = s.t * kTradingDays;
         sigma_true_.push(days, annualised_pct(s.sigma2_true, dt_));
         // フィルタ 2 本は窓が埋まるまで 0（＝まだ推定していない）。0 は描かない。

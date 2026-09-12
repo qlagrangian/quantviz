@@ -315,6 +315,21 @@ TEST_CASE("RUNNER-10: a model command applied on a tick that runs no steps repub
         CHECK(snaps[0].resets == 1);
     }
 
+    SECTION("Reset and SetParam drained in the same paused tick publish exactly one snapshot") {
+        Runner<CounterModel> r(CounterModel{}, paused);
+        REQUIRE(r.send(Command::step_once()));
+        REQUIRE(r.tick(1.0) == 1);
+        REQUIRE(drain(r).size() == 1);
+
+        REQUIRE(r.send(Command::reset()));
+        REQUIRE(r.send(Command::set_param(1, 7.0)));
+        CHECK(r.tick(1.0) == 0);
+        const auto snaps = drain(r);
+        REQUIRE(snaps.size() == 1);   // 2 つのモデルコマンドでも再送は 1 回
+        CHECK(snaps[0].steps == 0);
+        CHECK(snaps[0].param == 7.0);
+    }
+
     SECTION("a tick with only clock commands publishes nothing") {
         Runner<CounterModel> r(CounterModel{}, paused);
         REQUIRE(r.send(Command::set_speed(2.0)));

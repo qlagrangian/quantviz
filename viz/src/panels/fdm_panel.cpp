@@ -27,7 +27,7 @@ constexpr double kSpotWindow = 2.5;
 // 起動直後（まだ 1 枚も受け取っていない）の待機表示。Reset / パラメータ変更のあとは bridge の R10 が
 // 一時停止中でも 1 組を publish するので、ここには戻らない。
 constexpr const char* kWaitingSnapshot = "waiting for the first snapshot ...";
-constexpr const char* kWaitingSurface  = "waiting for the first surface ...";
+constexpr const char* kWaitingSurface  = "waiting for the surface ...";
 
 /// 配当利回り q を持つ BS 価格。`bs_price` は q を取らないので S を e^{−qτ} 倍して渡す
 /// （d1 の中の log(S/K) が −qτ ぶん動き、前進項も S e^{−qτ} になるので厳密に一致する）。
