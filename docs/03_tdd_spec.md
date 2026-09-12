@@ -410,13 +410,13 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| LSM-01 | アンチセティック対の Z の和は厳密に 0 | U | ⬜ |
-| LSM-02 | American put 価格が CN（FDM-06 の設定）の 95 % CI 内 | S | ⬜ |
-| LSM-03 | 同パスの European MC 価格以上 | P | ⬜ |
-| LSM-04 | 基底数 2→5 で価格差が CI 内 | S | ⬜ |
-| LSM-05 | seed 固定で価格 bit 一致 | D | ⬜ |
-| LSM-06 | σ=0 で決定的ペイオフ | N | ⬜ |
-| LSM-07 | SE が 1/√N で減少（N を 4 倍で SE 半分、±20 %） | S | ⬜ |
+| LSM-01 | アンチセティック対の Z の和は厳密に 0 | U | ✅ |
+| LSM-02 | American put 価格（N=20000, M=50, Laguerre 4）が CN（FDM-06 の設定）の 4 SE 内。Bermudan(50)+方策のバイアス −0.005（0.16 SE、400 seed 実測）。American プレミアム > 10 SE で「壊れた方策」は落ちる | S | ✅ |
+| LSM-03 | 同パスの European MC 価格以上 | P | ✅ |
+| LSM-04 | 基底数 2→5 で価格差が 4·√(SE₂²+SE₅²) 内（同一パスなので差はほぼバイアス +0.064±0.020。CI ではなく価格水準の頑健性バンド） | S | ✅ |
+| LSM-05 | seed 固定で価格・SE・パス・行使時点・分位が bit 一致。remaining()==1 の非自明なフィット（rank 3、係数非零）も bit 一致 | D | ✅ |
+| LSM-06 | σ=0 で決定的ペイオフ | N | ✅ |
+| LSM-07 | SE が 1/√N で減少（N を 4 倍で SE 半分、±20 %） | S | ✅ |
 | LSMSCENE-01 | Model 契約充足、Snapshot（縮約パス K 本 + 分位帯, 継続価値フィット）は POD | K | ⬜ |
 | LSMSCENE-02 | 1 step = 1 時点の後ろ向き回帰 | U | ⬜ |
 | LSMSCENE-03 | 全時点処理後の価格 = `lsm` 単体 | D | ⬜ |
