@@ -8,6 +8,10 @@
 // * Model と SimClock は計算スレッドが所有する。start() 後に外から触ってはならない。
 // * tick(elapsed) は 1 ループ分を同期実行する。テストと単一スレッド運用のために公開している。
 // * リングが満杯なら Snapshot は捨てて dropped_ を数える（コアを止めない）。
+// * R10（M3）: ステップが 0 の tick でモデル系 Command（SetParam / Reset）を適用したら、その場で
+//   Snapshot を 1 枚（SurfaceModel なら面も）publish する。一時停止中の操作が「次の Step まで
+//   画面に出ない」のを防ぐため。seq は同じ値で再送されうる（SetParam）し、Reset では 0 に戻る。
+//   描画側は「seq が**厳密に**減った or 0」を巻き戻しとして扱うこと（同じ seq の再送は巻き戻しではない）。
 // * Model が SurfaceModel を満たすときだけ「面チャネル」が生える（M2）。グリッド大の状態は履歴が
 //   不要なので、リングではなく TripleBuffer で最新 1 枚だけを渡す。満たさない Model では
 //   detail::SurfaceChannel が空の基底クラスになり、Runner のサイズも振る舞いも一切変わらない。
@@ -110,8 +114,8 @@ public:
     // ------------------------------------------------------------------ 同期 API（テスト／単一スレッド）
     /// 1 ループ分: コマンド消化 → 期限ステップ実行 → Snapshot 発行。実行したステップ数を返す。
     std::size_t tick(double elapsed_wall_seconds) {
-        drain_commands();
-        const std::size_t n = clock_.due_steps(elapsed_wall_seconds);
+        const std::size_t model_commands = drain_commands();
+        const std::size_t n              = clock_.due_steps(elapsed_wall_seconds);
         for (std::size_t i = 0; i < n; ++i) {
             model_.step(cfg_.dt);
             const std::uint64_t s = steps_.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -119,6 +123,15 @@ public:
             if constexpr (SurfaceModel<M>) {
                 if (s % cfg_.surface_every == 0) publish_surface();
             }
+        }
+        // R10: ステップが 1 つも走らなかった tick でモデルが変わったなら、その場で 1 枚出す。
+        // 出さないと一時停止中の Reset / SetParam が次の Step まで画面に現れない。ステップが
+        // 走った tick では上のループが既に出しているので二重には出さない。面も同時に出す
+        // （publish_every / surface_every の間引きは「流れ続ける列」への間引きなので、この
+        // 単発の 1 枚には掛けない。掛けると位相次第で変更が反映されないことがある）。
+        if (n == 0 && model_commands > 0) {
+            publish();
+            if constexpr (SurfaceModel<M>) publish_surface();
         }
         return n;
     }
@@ -142,9 +155,16 @@ private:
         }
     }
 
-    void drain_commands() {
-        Command c;
-        while (commands_.try_pop(c)) dispatch(c);
+    /// 溜まっている Command を全て適用し、そのうち**モデル系**（SetParam / Reset）の数を返す。
+    /// 時計系（Pause/Resume/StepOnce/SetSpeed）はモデルの状態を変えないので数えない。
+    std::size_t drain_commands() {
+        std::size_t model_commands = 0;
+        Command     c;
+        while (commands_.try_pop(c)) {
+            if (!is_clock_command(c.type)) ++model_commands;
+            dispatch(c);
+        }
+        return model_commands;
     }
 
     void dispatch(const Command& c) {
@@ -167,7 +187,9 @@ private:
             last                 = now;
             if (tick(elapsed) == 0) std::this_thread::sleep_for(cfg_.idle_sleep);
         }
-        drain_commands();  // 契約: stop() 前に send() が true を返した Command は必ず適用される
+        // 契約: stop() 前に send() が true を返した Command は必ず適用される。ここは停止後なので
+        // 読み手はもういない → R10 の再 publish はしない（返り値は捨てる）。
+        drain_commands();
     }
 
     M        model_;

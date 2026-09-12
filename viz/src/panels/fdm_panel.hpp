@@ -19,6 +19,10 @@
 // 楔形に伸びる形が「後ろ向き反復がどこまで来たか」を一目で見せる（最後の行を前へ押し出すと、
 // まだ解いていない領域に解があるように見えてしまう）。
 //
+// 【一時停止中の操作】Reset / パラメータ変更は掃引を満期へ巻き戻す。bridge の R10 により、
+// ステップが走らない tick でも Snapshot と面が 1 組 publish されるので、一時停止中でも次のフレームで
+// 新しい状態に入れ替わる。待機表示が出るのは「まだ 1 枚も受け取っていない」起動直後だけ。
+//
 // GL が使えない環境でも viewer は落とさない（3D ウィンドウがテキスト表示に落ちるだけ）。
 
 #include <array>
@@ -61,22 +65,18 @@ private:
 
     /// 手元の面を捨てる（新しい Snapshot が古い面と食い違ったとき）。
     void invalidate_surface() noexcept;
-    /// Reset / パラメータ変更を送ったときに呼ぶ。面と Snapshot の両方を捨てて全ウィンドウを待機表示に戻す
-    /// （Runner が次の Snapshot を出すのは次のステップなので、一時停止中は古い値が残ってしまう）。
-    void invalidate_view() noexcept;
 
     Snap          last_{};
     Surf          surface_{};
     /// 受信した Snapshot の累計。`RateMeter` に渡すだけなので**単調増加**でなければならない
-    /// （巻き戻すと Δ が符号なしで一周して、レートが 1e19 件/秒になる）。「描ける Snapshot を
-    /// 持っているか」は下の have_snapshot_ が持つ。
+    /// （巻き戻すと Δ が符号なしで一周して、レートが 1e19 件/秒になる）。0 は「まだ 1 枚も
+    /// 受け取っていない」＝待機表示の唯一の条件でもある。
     std::uint64_t received_  = 0;
     std::uint64_t surfaces_  = 0;
     std::uint32_t prev_iter_ = 0;  ///< 巻き戻し検出用（iteration が減ったら面を捨てる）
     RateMeter     rate_;
 
-    bool have_snapshot_ = false;  ///< 有効な Snapshot を持っているか（Reset / パラメータ変更で false）
-    bool have_surface_ = false;  ///< 有効な面を持っているか（Reset / パラメータ変更で false）
+    bool have_surface_ = false;  ///< 有効な面を持っているか（掃引が巻き戻った直後だけ false）
     bool mesh_dirty_   = false;  ///< VBO 未反映の更新があるか（upload できたフレームだけ下ろす）
     bool init_tried_   = false;  ///< レンダラ初期化は 1 回だけ試す
 

@@ -11,11 +11,12 @@
 // （M1 の明示的な例外。M2 で triple buffer に移すまでは Runner の SnapCap を 256 に、
 // steps_per_second を 100 に抑えて帯域を稼がない。契約テスト GREEKS-01 の上限は 32 KiB）。
 //
-// パラメータの反映タイミング: `apply()` は値をペンディングに積むだけで、確定は次の `step()` の先頭。
-// これは bridge の規約「Command は step の前に消化され、次のステップから効く」そのものであり、
-// 同時に「Snapshot は常に自己整合的（配列と真値フィールドは同じパラメータで計算されている）」を
-// 保証する。GREEKS-03 はこの 2 つを検査する。唯一の例外が `reset()` で、こちらはその場でペンディングを
-// 確定させ、軸・面・ストリップを張り直す（Reset 後の Snapshot は次の step を待たずに新しい値を映す）。
+// パラメータの反映タイミング: `apply()` は値をペンディングに積み、その場で `commit_pending()` +
+// `publish()` を行う。つまり SetParam 直後の Snapshot は新しいパラメータで計算し直した配列と真値
+// フィールドを持ち（自己整合的）、seq は進まない。Runner は一時停止中の SetParam の直後に Snapshot を
+// 1 回だけ再送する（R10）ので、Step を押さなくてもスライダーやスポットショックの効果が画面に出る。
+// step() の先頭でも `commit_pending()` を呼ぶが、apply で確定済みなら差分が無く何もしない。
+// GREEKS-03 はこの契約を検査する。`reset()` も同様にその場で確定・張り直しを行う。
 //
 // σ について: このシーンには 2 つの σ がある。パスのボラティリティは `Config::gbm.sigma`（固定）、
 // 価格付けのボラティリティは `Config::sigma`（`kSigma` で可変）。前者を動かさないので、スポット列は
@@ -75,7 +76,7 @@ public:
     static constexpr core::OptionType kOptionType = core::OptionType::Call;
 
     enum Param : std::uint32_t {
-        /// 現在のスポットを value 倍する手動ショック（次ステップの先頭で適用）。
+        /// 現在のスポットを value 倍する手動ショック（apply の場で適用、非正・非有限は無視）。
         /// value <= 0 と非有限値は「無視」（クランプではなく破棄。0 倍や負のスポットは意味を持たず、
         /// 既定値に落とすと UI の誤操作が静かにパスを壊すため）。掛け算の結果が非有限になる場合も同様。
         kSpotJump   = 1,
@@ -136,8 +137,12 @@ public:
                     case kSigma:      pending_.sigma = clamp_sigma(c.value); break;
                     case kMaturity:   pending_.maturity = clamp_maturity(c.value); break;
                     case kStrikeSpan: pending_.span = clamp_span(c.value); break;
-                    default:          break;  // 未知の param_id は無視
+                    default:          return;  // 未知の param_id は無視（再計算もしない）
                 }
+                // 一時停止中でも Snapshot が新しい値を映すよう、その場で確定して張り直す（R10 と対）。
+                // seq は動かさない。step() 側の commit_pending() は差分が無ければ何もしない。
+                commit_pending();
+                publish();
                 break;
             case bridge::CommandType::Reset: reset(c.seed != 0 ? c.seed : seed_); break;
             default:                         break;  // 時計系は Runner が処理済み
@@ -191,7 +196,7 @@ private:
         return (v < kMaxSpan) ? v : kMaxSpan;
     }
 
-    /// スポットショックは倍率として積み上げ、次の step() の先頭でまとめて適用する。
+    /// スポットショックは倍率として積み上げ、commit_pending()（apply の場、および step の先頭）で消費する。
     void queue_spot_jump(double v) noexcept {
         if (v > 0.0 && std::isfinite(v)) jump_ *= v;
     }
@@ -280,7 +285,7 @@ private:
     std::uint64_t seed_;
     double        jump_ = 1.0;     ///< 未適用のスポットショック倍率
     std::uint64_t seq_  = 0;
-    Params        pending_;        ///< UI から来た値（次の step で確定）
+    Params        pending_;        ///< UI から来た値（apply の場で確定。step 先頭の commit は差分ゼロ）
     Params        active_;         ///< snap_ の中身を計算したときの値
     Snapshot      snap_{};
 };

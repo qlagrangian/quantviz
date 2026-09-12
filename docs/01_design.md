@@ -164,6 +164,7 @@ struct Command { CommandType type; uint32_t param_id; double value; uint64_t see
 | R7 | `start()` は冪等。デストラクタは join する |
 | R8 | `tick(elapsed)` は 1 ループ分の同期実行。`start()` 中に呼んではならない |
 | R9 | `SurfaceModel` の Runner は `surface_every` ステップごとに面を `TripleBuffer` へ publish し、`poll_surface` は最新 1 枚だけを返す（古い面は捨てる）。非 SurfaceModel の Runner にはチャネルが生えない（サイズ不変） |
+| R10 | ステップが 0 の tick でモデル系 Command（SetParam / Reset）を適用したら、Snapshot を 1 枚（SurfaceModel なら面も）publish する（間引きは掛けない）。ステップが走った tick では追加の publish をしない。seq は同じ値で再送されうる（Reset は 0 に戻す）→ R4 の「単調増加」は「減らない」の意味 |
 
 ---
 
@@ -240,7 +241,7 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | シーン | Model | Snapshot の主内容 | Param |
 |---|---|---|---|
 | Streaming ✅ | `StreamingModel` | t, spot, log_return, Welford 平均/分散, EWMA 分散, μ/σ 真値, seq | mu, sigma, ewma_lambda |
-| Greeks ✅M1 | `GreeksModel` | S（GBM, 経路ボラは固定）, 64 ストライクの price/Δ/Γ/ν/Θ/ρ（`bs_price_strip` の SIMD 経路を本番使用）, Γ(S,T) 48×32 格子（r/σ/T が変わった時だけ再計算）, 真値 r/σ/T, seq — 16.5 KB（M1 の例外、SnapCap 256） | スポットショック（×倍率, 非正・非有限は無視）, r, 価格ボラ σ, T, ストライク幅 |
+| Greeks ✅M1 | `GreeksModel` | S（GBM, 経路ボラは固定）, 64 ストライクの price/Δ/Γ/ν/Θ/ρ（`bs_price_strip` の SIMD 経路を本番使用）, Γ(S,T) 48×32 格子（r/σ/T が変わった時だけ再計算）, 真値 r/σ/T, seq — 16.5 KB（M1 の例外、SnapCap 256） | スポットショック（×倍率, 非正・非有限は無視）, r, 価格ボラ σ, T, ストライク幅（いずれも apply の場で反映、R10 で一時停止中も画面に出る） |
 | Garch ✅M1 | `GarchModel` | 合成 GARCH の r_t と σ²_t 真値、ローリング窓（既定 500 日、10 ステップごとに `garch_fit_into` で warm-start 再推定）の推定 σ²・(ω̂,α̂,β̂)・対数尤度、尤度面 L(α,β) 32×32（ω=ω̂ の断面、非定常点は有限最小値にクランプ）、最適化軌跡（先頭から等間引きで最大 64 点、終点 = 推定値）、seq — 9.8 KB（M1 の例外、SnapCap 256）。窓を広げた直後は埋まるまで推定を出さない | ω, α, β（真値。α+β ≥ kMax なら比を保って縮小）, optimizer（NM / BFGS）, 窓長 [50, 2048] |
 | Kalman ✅M1 | `KalmanPairModel` | x, y（y = β_t x + ε）, β 真値, β̂, β 分散, スプレッド（事後残差）, イノベーション（事前残差）, skipped（縮退観測のスキップ数）, seq — 96 B | 観測ノイズ, 状態ノイズ, 真の β（β_t は κ=0.002 で真値へ平均回帰するランダムウォーク。フィルタは F=1 を仮定する意図的な軽い誤特定） |
 | VolSurface ✅M2 | `VolSurfaceModel`（SurfaceModel） | Snapshot: t, SSVI パラメータ, k/T 範囲, seq（80 B）。Surface: 64×32 の IV 格子 + 軸（8.6 KB、TripleBuffer 経由。パラメータ変更時だけ再計算） | σ_atm, ρ, η, γ（`ssvi_clamp` でクランプ） |
@@ -254,7 +255,6 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | モジュール | 責務 |
 |---|---|
 | `history.hpp`（vizcore） ✅ | 描画側の固定長循環履歴。ImPlot の `offset` 規約（満杯時 offset = 最古の index） |
-| `history2d.hpp`（vizcore） ✅M3 | 価格ビン × 時間列の固定寸法 2D 循環履歴。`ordered()` が最古→最新の row-major 配列（`PlotHeatmap` にそのまま渡せる）を 1 回のコピーで返す |
 | `panels/streaming_panel.*` ✅ | Spot / Volatility / Control の 3 ウィンドウ |
 | `main.cpp` ✅ | GLFW + ImGui + ImPlot の起動・フレームループ・終了 |
 | `panels/{streaming,greeks,garch,kalman}_panel.*` ✅M1 | シーンごとに 1 パネル。`draw(Runner&)` + `make_<scene>_scene()`。共通部品は `panels/panel_common.hpp`（`now_seconds`, `kTradingDays`, `kPanelTop`, `setup_follow_axis`）と `viz/rate_meter.hpp`（受信レート EMA）。Reset 時は `prev_seq_` ガードでリング内の古い Snapshot を捨てる |
@@ -323,6 +323,9 @@ M0 実測（GCC 13, -O3, Xeon 想定）：`push+pop ≈ 4.4 ns`、`StreamingMode
 * スライダーは変更されたフレームだけ `send`。失敗（ring 満杯）は次のフレームで値が変わればまた送られるので握り潰してよい
 * Pause/Resume はトグルボタン 1 つ。`Step` は一時停止中のみ有効
 * Reset は `Command::reset()` を送り、同時に描画側の History を `clear()`
+* 一時停止中の SetParam / Reset も次のフレームで画面に出る（R10 の再 publish）。パネルの巻き戻りガードは
+  `seq < prev_seq_`（**厳密**に減ったときだけ History を捨てる）。同じ seq の再送は巻き戻しではないので
+  History は消さずに点を足し、`seq == 0` の 1 枚は History に積まない（0 日目への偽の線分になるため）
 
 ### 9.5 フレーム予算
 

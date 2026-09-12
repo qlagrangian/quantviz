@@ -162,22 +162,29 @@ TEST_CASE("GREEKS-02: the strike axis is ascending and equally spaced and every 
     }
 }
 
-TEST_CASE("GREEKS-03: SetParam(sigma) reaches the Greeks on the next step and never advances seq",
+TEST_CASE("GREEKS-03: SetParam(sigma) is reflected in the snapshot immediately without advancing seq, and persists across steps",
           "[greeks][unit]") {
     GreeksModel m(test_config());
     for (int i = 0; i < 20; ++i) m.step(kDt);
     const auto before = m.snapshot();
 
-    SECTION("apply() alone changes nothing (snapshot stays self-consistent)") {
+    SECTION("apply() alone recomputes the snapshot with the new sigma and keeps seq (self-consistent)") {
+        // R10: 一時停止中の SetParam 直後に Runner が Snapshot を再送するので、その Snapshot が
+        // 新しい σ で計算し直された配列と真値フィールドを持っていなければならない。
         m.apply(Command::set_param(GreeksModel::kSigma, 0.50));
         const auto s = m.snapshot();
         CHECK(s.seq == before.seq);  // パラメータ変更はステップを進めない
-        CHECK(s.sigma == before.sigma);
-        CHECK(s.gamma == before.gamma);
-        CHECK(s.vega == before.vega);
+        CHECK(s.sigma == 0.50);
+        CHECK(s.spot == before.spot);  // スポットは動かない
+        CHECK(s.gamma != before.gamma);
+        for (std::size_t i = 0; i < GreeksSnapshot::kStrikes; ++i) {
+            const auto g = quantviz::core::bs_greeks(s.spot, s.strikes[i], s.T, s.r, s.sigma,
+                                                     quantviz::core::OptionType::Call);
+            REQUIRE(s.gamma[i] == g.gamma);  // 配列と真値フィールドが同じパラメータで計算されている
+        }
     }
 
-    SECTION("the next step recomputes the strip with the new sigma") {
+    SECTION("the next step keeps the new sigma and recomputes the strip at the stepped spot") {
         m.apply(Command::set_param(GreeksModel::kSigma, 0.50));
         m.step(kDt);
         const auto s = m.snapshot();
@@ -202,7 +209,9 @@ TEST_CASE("GREEKS-03: SetParam(sigma) reaches the Greeks on the next step and ne
     SECTION("rate and maturity behave the same way") {
         m.apply(Command::set_param(GreeksModel::kRate, 0.08));
         m.apply(Command::set_param(GreeksModel::kMaturity, 1.5));
-        CHECK(m.snapshot().r == before.r);
+        CHECK(m.snapshot().r == 0.08);   // 即時反映
+        CHECK(m.snapshot().T == 1.5);
+        CHECK(m.snapshot().seq == before.seq);
         m.step(kDt);
         const auto s = m.snapshot();
         CHECK(s.r == 0.08);

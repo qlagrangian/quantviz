@@ -119,7 +119,7 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 | RUNNER-07 | スレッド実行で Snapshot の seq が単調増加。`stop()` 前に `send` が true を返した Command は `stop()` 後に必ず適用済み。`running()` が正しい | C | ✅ |
 | RUNNER-08 | `start()` は冪等。デストラクタは走行中スレッドを join する（ハングしない） | C | ✅ |
 | RUNNER-09 | `SurfaceModel` を満たす Model の Runner は `surface_every` ステップごとに面を `TripleBuffer` へ publish し、`poll_surface` は最新 1 枚だけを返す（古い面は捨てる）。非 SurfaceModel の Runner にはチャネルが生えない | U | ✅ |
-| RUNNER-10 | 一時停止中（その tick のステップ数が 0）に `Reset` / `SetParam` を適用したら、Snapshot（SurfaceModel なら面も）を 1 回 publish する。seq は再送でも減らない（Reset は 0 に戻す）。ステップがあった tick では追加の publish はしない | U | ⬜ |
+| RUNNER-10 | 一時停止中（その tick のステップ数が 0）に `Reset` / `SetParam` を適用したら、Snapshot（SurfaceModel なら面も）を 1 回 publish する。seq は再送でも減らない（Reset は 0 に戻す）。ステップがあった tick では追加の publish はしない | U | ✅ |
 
 ### 3.4 GBM — `core/models/gbm.hpp` → `tests/test_gbm.cpp`
 
@@ -226,7 +226,7 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 |---|---|---|---|
 | GREEKS-01 | Model 契約充足、Snapshot は POD（固定 N ストライク配列 + 固定格子） | K | ✅ |
 | GREEKS-02 | ストライク配列は昇順・等間隔、Snapshot 全要素が有限 | P | ✅ |
-| GREEKS-03 | SetParam(σ) は次ステップの Greeks に反映、seq は進まない | U | ✅ |
+| GREEKS-03 | SetParam(σ / r / T) は apply の場で Snapshot に反映され（配列と真値フィールドは同じパラメータで再計算、seq は進まない）、以後のステップでも維持される。未知 id は無視（M3 の R10 に合わせて「次ステップから」を改定） | U | ✅ |
 | GREEKS-04 | Γ の最大ストライクは S に最も近いストライク（±1 グリッド） | P | ✅ |
 | GREEKS-05 | 同 seed の素の Gbm と S が一致（dual-run） | D | ✅ |
 
@@ -395,9 +395,9 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 | LOBSCENE-02 | 「大口注入」Command で best ask が上がる（買い）／best bid が下がる（売り） | U | ⬜ |
 | LOBSCENE-03 | Snapshot の深度が板の `depth(N)` と一致（dual-run） | D | ⬜ |
 | LOBSCENE-04 | Reset で板が空・λ が μ に戻る | U | ⬜ |
-| HEAT-01 | 2D History（価格 × 時間）の寸法が固定、時間方向に循環。`push_column` は Rows 未満の列を無視し、長い列は先頭 Rows 要素だけ使う | U | ✅ |
-| HEAT-02 | 循環後の列順が最古→最新 | U | ✅ |
-| HEAT-03 | `clear` で全ゼロ | U | ✅ |
+| HEAT-01 | 2D History（価格 × 時間）の寸法が固定、時間方向に循環 | U | ⬜ |
+| HEAT-02 | 循環後の列順が最古→最新 | U | ⬜ |
+| HEAT-03 | `clear` で全ゼロ | U | ⬜ |
 
 ---
 

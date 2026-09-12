@@ -275,3 +275,83 @@ TEST_CASE("RUNNER-09: a SurfaceModel runner publishes the latest surface every s
         CHECK(r.surfaces_published() == 5);
     }
 }
+
+// --------------------------------------------------------------------------- M3: 一時停止中の反映
+
+// CounterModel / SurfaceCounterModel には `seq` フィールドが無いので、`steps` が seq の役を担う
+// （step で +1、Reset で 0 に戻る）。
+TEST_CASE("RUNNER-10: a model command applied on a tick that runs no steps republishes the snapshot",
+          "[runner][unit]") {
+    RunnerConfig paused       = cfg(100.0);
+    paused.clock.start_paused = true;
+
+    SECTION("SetParam while paused publishes exactly one snapshot, with the seq unchanged") {
+        Runner<CounterModel> r(CounterModel{}, paused);
+        REQUIRE(r.send(Command::step_once()));
+        REQUIRE(r.send(Command::step_once()));
+        REQUIRE(r.send(Command::step_once()));
+        REQUIRE(r.tick(1.0) == 3);
+        REQUIRE(drain(r).size() == 3);
+
+        REQUIRE(r.send(Command::set_param(1, 2.5)));
+        CHECK(r.tick(1.0) == 0);  // 一時停止中: ステップは走らない
+        const auto snaps = drain(r);
+        REQUIRE(snaps.size() == 1);  // それでも新しい状態が 1 枚だけ出る
+        CHECK(snaps[0].param == 2.5);
+        CHECK(snaps[0].steps == 3);  // seq は据え置き（巻き戻らない）
+    }
+
+    SECTION("Reset while paused publishes one snapshot with seq 0") {
+        Runner<CounterModel> r(CounterModel{}, paused);
+        REQUIRE(r.send(Command::step_once()));
+        REQUIRE(r.tick(1.0) == 1);
+        REQUIRE(drain(r).size() == 1);
+
+        REQUIRE(r.send(Command::reset()));
+        CHECK(r.tick(1.0) == 0);
+        const auto snaps = drain(r);
+        REQUIRE(snaps.size() == 1);
+        CHECK(snaps[0].steps == 0);   // Reset は seq を 0 に戻す
+        CHECK(snaps[0].resets == 1);
+    }
+
+    SECTION("a tick with only clock commands publishes nothing") {
+        Runner<CounterModel> r(CounterModel{}, paused);
+        REQUIRE(r.send(Command::set_speed(2.0)));
+        REQUIRE(r.send(Command::pause()));
+        CHECK(r.tick(1.0) == 0);
+        CHECK(drain(r).empty());
+    }
+
+    SECTION("a tick that also runs steps publishes only the per-step snapshots") {
+        Runner<CounterModel> r(CounterModel{}, paused);
+        REQUIRE(r.send(Command::set_param(1, 7.0)));
+        REQUIRE(r.send(Command::step_once()));
+        CHECK(r.tick(1.0) == 1);
+        const auto snaps = drain(r);
+        REQUIRE(snaps.size() == 1);  // 追加の 1 枚は出さない
+        CHECK(snaps[0].steps == 1);
+        CHECK(snaps[0].param == 7.0);
+    }
+
+    SECTION("a SurfaceModel republishes the surface too, whatever the surface_every phase") {
+        RunnerConfig c  = paused;
+        c.surface_every = 3;
+        Runner<SurfaceCounterModel> r(SurfaceCounterModel{}, c);
+        REQUIRE(r.send(Command::step_once()));
+        REQUIRE(r.send(Command::step_once()));
+        REQUIRE(r.tick(1.0) == 2);
+        REQUIRE(drain(r).size() == 2);       // 2 ステップぶんの Snapshot は取り除いておく
+        CHECK(r.surfaces_published() == 0);  // まだ 3 の倍数に達していない
+        CounterSurface surf{};
+        CHECK_FALSE(r.poll_surface(surf));
+
+        REQUIRE(r.send(Command::set_param(1, 1.0)));
+        CHECK(r.tick(1.0) == 0);
+        CHECK(r.surfaces_published() == 1);
+        REQUIRE(r.poll_surface(surf));
+        CHECK(surf.steps == 2);
+        CHECK(surf.checksum == expected_checksum(2));
+        CHECK(drain(r).size() == 1);
+    }
+}
