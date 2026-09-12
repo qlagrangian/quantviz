@@ -28,7 +28,16 @@ add_executable(quantviz_tests
   test_optim.cpp
   test_garch.cpp
   test_kalman.cpp
-  test_greeks.cpp)
+  test_greeks.cpp
+  # ---- M2
+  test_triple_buffer.cpp
+  test_gl_math.cpp
+  test_surface_mesh.cpp
+  bench_surface_mesh.cpp
+  test_tridiag.cpp
+  test_fdm_cn.cpp
+  test_vol_surface.cpp
+  test_fdm_scene.cpp)
 
 target_link_libraries(quantviz_tests PRIVATE
   quantviz::core quantviz::bridge quantviz::scenes quantviz::vizcore quantviz::warnings
