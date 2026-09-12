@@ -118,7 +118,7 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 | RUNNER-06 | Command リング満杯なら `send` は false（ブロックしない） | U | ✅ |
 | RUNNER-07 | スレッド実行で Snapshot の seq が単調増加。`stop()` 前に `send` が true を返した Command は `stop()` 後に必ず適用済み。`running()` が正しい | C | ✅ |
 | RUNNER-08 | `start()` は冪等。デストラクタは走行中スレッドを join する（ハングしない） | C | ✅ |
-| RUNNER-09 | `SurfaceModel` を満たす Model の Runner は `surface_every` ステップごとに面を `TripleBuffer` へ publish し、`poll_surface` は最新 1 枚だけを返す（古い面は捨てる）。非 SurfaceModel の Runner にはチャネルが生えない | U | ⬜ |
+| RUNNER-09 | `SurfaceModel` を満たす Model の Runner は `surface_every` ステップごとに面を `TripleBuffer` へ publish し、`poll_surface` は最新 1 枚だけを返す（古い面は捨てる）。非 SurfaceModel の Runner にはチャネルが生えない | U | ✅ |
 
 ### 3.4 GBM — `core/models/gbm.hpp` → `tests/test_gbm.cpp`
 
@@ -300,11 +300,11 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| TRIPLE-01 | 読み手は常に最後に publish された値を見る | U | ⬜ |
-| TRIPLE-02 | 書き手は決してブロックしない（読み手が遅くても） | C | ⬜ |
-| TRIPLE-03 | 読み手が裂けた値（torn read）を観測しない（各スロットにチェックサム、1e6 回） | C | ⬜ |
-| TRIPLE-04 | 新データが無ければ `read` は false | U | ⬜ |
-| TRIPLE-05 | T は trivially copyable（`static_assert`） | K | ⬜ |
+| TRIPLE-01 | 読み手は常に最後に publish された値を見る | U | ✅ |
+| TRIPLE-02 | 書き手は決してブロックしない（読み手が遅くても） | C | ✅ |
+| TRIPLE-03 | 読み手が裂けた値（torn read）を観測しない（各スロットにチェックサム、1e6 回） | C | ✅ |
+| TRIPLE-04 | 新データが無ければ `read` は false | U | ✅ |
+| TRIPLE-05 | T は trivially copyable（`static_assert`） | K | ✅ |
 
 ### 5.4 VOLSURF — `core/pricing/vol_surface.hpp`, `scenes/vol_surface_model.hpp`
 

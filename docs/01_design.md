@@ -231,7 +231,7 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | `model_concept.hpp` ✅ | 契約 | `Model`, `SnapshotType` |
 | `sim_clock.hpp` ✅ | 時間変換 | 時間源なし・純ロジック。蓄積は一時停止中に止まる |
 | `runner.hpp` ✅ | 計算スレッド | `RunnerConfig` は非依存型（テンプレート引数違いの Runner 間で共有可）。`tick()` で同期テスト |
-| `triple_buffer.hpp` 🔜M2 | 「最新 1 枚」だけ欲しい大きな状態（グリッド）向け | サーフェスは履歴不要 → ring より triple buffer が適切 |
+| `triple_buffer.hpp` ✅M2 | 「最新 1 枚」だけ欲しい大きな状態（グリッド）向け SPSC 交換 | 3 スロット + 1 語の atomic 状態（back/middle/front の置換 + new ビット）。publish/read とも CAS は acq_rel（読み手がコピーしたスロットを書き手が再利用する WAR 方向にも HB が要る — TSan で実証）。`back()` は 2 世代前の面を含む使い回しスロット（毎回全フィールドを書く）。`Runner` は `SurfaceModel` のときだけこのチャネルを持つ（空基底で非対応 Model のサイズは不変） |
 
 ### 6.3 `scenes/`（core + bridge）
 
