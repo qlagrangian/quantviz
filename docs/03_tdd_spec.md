@@ -119,6 +119,7 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 | RUNNER-07 | スレッド実行で Snapshot の seq が単調増加。`stop()` 前に `send` が true を返した Command は `stop()` 後に必ず適用済み。`running()` が正しい | C | ✅ |
 | RUNNER-08 | `start()` は冪等。デストラクタは走行中スレッドを join する（ハングしない） | C | ✅ |
 | RUNNER-09 | `SurfaceModel` を満たす Model の Runner は `surface_every` ステップごとに面を `TripleBuffer` へ publish し、`poll_surface` は最新 1 枚だけを返す（古い面は捨てる）。非 SurfaceModel の Runner にはチャネルが生えない | U | ✅ |
+| RUNNER-10 | 一時停止中（その tick のステップ数が 0）に `Reset` / `SetParam` を適用したら、Snapshot（SurfaceModel なら面も）を 1 回 publish する。seq は再送でも減らない（Reset は 0 に戻す）。ステップがあった tick では追加の publish はしない | U | ⬜ |
 
 ### 3.4 GBM — `core/models/gbm.hpp` → `tests/test_gbm.cpp`
 
