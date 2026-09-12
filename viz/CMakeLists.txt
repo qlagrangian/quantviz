@@ -61,7 +61,11 @@ add_executable(quantviz_viz
   src/panels/streaming_panel.cpp
   src/panels/kalman_panel.cpp
   src/panels/garch_panel.cpp
-  src/panels/greeks_panel.cpp)
+  src/panels/greeks_panel.cpp
+  src/panels/vol_surface_panel.cpp
+  src/panels/fdm_panel.cpp
+  src/gl/gl_loader.cpp
+  src/gl/surface_renderer.cpp)
 target_include_directories(quantviz_viz PRIVATE src)
 target_link_libraries(quantviz_viz PRIVATE
   quantviz::scenes quantviz::vizcore quantviz::warnings

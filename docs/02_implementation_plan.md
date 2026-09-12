@@ -64,7 +64,7 @@
 |---|---|---|---|---|---|
 | **M0** | 骨組み・Streaming | SpscRing, SimClock, Runner, Gbm, Welford, EWMA, StreamingModel, viewer 3 パネル, CI | ロックフリー SPSC、concept、jthread、POD 境界 | GBM 厳密解、逐次統計、EWMA の窓 | ✅ 完了 |
 | **M1** | 2D 理論パネル | Black–Scholes + Greeks（SIMD）, GARCH(1,1) MLE, Kalman ヘッジ比率, 共通 Control, シーン切替 | SIMD、固定サイズ行列テンプレート、最適化器の自作 | Γ の尖り、尤度面の谷、フィルタの追従 | ✅ 完了 |
-| **M2** | 3D サーフェス・FDM | OpenGL サーフェス描画（自作）, ボラ面, Thomas 法, Crank–Nicolson + PSOR, 行使境界, triple buffer | GL パイプライン、連続メモリ、三重対角 | American の早期行使境界、後ろ向き反復 | ⬜ |
+| **M2** | 3D サーフェス・FDM | OpenGL サーフェス描画（自作）, ボラ面, Thomas 法, Crank–Nicolson + PSOR, 行使境界, triple buffer | GL パイプライン、連続メモリ、三重対角 | American の早期行使境界、後ろ向き反復 | ✅ 完了 |
 | **M3** | マイクロストラクチャ | 板 + マッチングエンジン, Hawkes 生成・推定, 板深度ラダー, 価格×時間ヒートマップ | intrusive list、カスタムアロケータ、O(n) 再帰 | 価格時間優先、自己励起、板の崩れ | ⬜ |
 | **M4** | 動的処理 | LSM, Almgren–Chriss, Merton HJB, パス束・執行軌道・価値関数面 | パス並列、DP のメモリ設計 | 最適停止、執行のリスク回避、HJB | ⬜ |
 | **M5** | AAD・性能 | テープ式 AAD, Greeks 比較, パフォーマンスパネル, perf 連携 | 演算子オーバーロード、テープ設計、計測 | 逆伝播 1 回で全 Greeks | ⬜ |
@@ -136,7 +136,10 @@ M2 と M3 は独立に進められる。M4 は M2（FDM が LSM の参照解）�
 
 ---
 
-### M2 — 3D サーフェス・FDM
+### M2 — 3D サーフェス・FDM ✅
+
+**実績（完了時点）** 6 シーン（+ Vol surface, FDM American、Greeks の Γ 3D 化）。テスト 147 ケース（M1 の 108 + 39）、ASan/UBSan/TSan（TRIPLE 追加）Green、`-Werror`。BENCH-04 は 200×200 の z・法線更新 0.22 ms（目標 2 ms）。FDM シーンは 200×200 の面を毎ステップ TripleBuffer 経由で渡し、llvmpipe（ソフトウェア GL）でも 10〜12 ms/フレーム。計画からの主な逸脱: 行使境界は 3D 面上ではなく専用の 2D ウィンドウ（レンダラは三角形のみ）、GL ローダは外部依存なしで `glfwGetProcAddress` から必要な 53 関数だけを解決、`SurfaceModel` 概念 + `Runner` の面チャネルで Snapshot（リング）と Surface（最新 1 枚）を分離、M1 で例外扱いだった大きな Snapshot は Greeks / GARCH に残る（M3 以降の整理候補）。Runner が一時停止中のコマンドを publish しない穴（RUNNER-10）は M3 冒頭で対応。
+
 
 **目的** 自作 OpenGL サーフェス描画を作り、Crank–Nicolson の後ろ向き反復を「手で 1 ステップずつ送れる 3D アニメ」にする。本 PJ の山場。
 

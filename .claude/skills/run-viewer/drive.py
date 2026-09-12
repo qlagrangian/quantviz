@@ -9,6 +9,7 @@ Usage (all window coordinates are client-area pixels of the viewer window):
   drive.py move <x> <y>                    move the pointer (hover)
   drive.py drag <x0> <y0> <x1> <y1>        press, move, release (e.g. to drag a slider)
   drive.py key <keysym> [n]                press a key (X keysym name, e.g. Return, Escape, a)
+  drive.py wheel <x> <y> [clicks]          mouse wheel at window coords (+up / -down)
   drive.py sleep <seconds>
   drive.py quit                            kill the viewer started by `launch` (pid file), else every viewer
 
@@ -123,6 +124,14 @@ def drag(x0, y0, x1, y1, steps=10):
         _T.XTestFakeMotionEvent(_d, -1, ox + x, oy + y, 0); _X.XFlush(_d); time.sleep(0.03)
     _T.XTestFakeButtonEvent(_d, 1, 0, 0); _X.XFlush(_d); time.sleep(0.3)
 
+def wheel(wx, wy, clicks=1):
+    """Scroll at window coords: positive clicks = up (X button 4), negative = down (button 5)."""
+    move(wx, wy)
+    button = 4 if clicks > 0 else 5
+    for _ in range(abs(int(clicks))):
+        _T.XTestFakeButtonEvent(_d, button, 1, 0); _X.XFlush(_d); time.sleep(0.03)
+        _T.XTestFakeButtonEvent(_d, button, 0, 0); _X.XFlush(_d); time.sleep(0.08)
+
 def key(name, n=1):
     kc = _X.XKeysymToKeycode(_d, _X.XStringToKeysym(name.encode()))
     for _ in range(n):
@@ -161,6 +170,7 @@ def main(argv):
     elif cmd == "move": move(int(a[0]), int(a[1]))
     elif cmd == "drag": drag(int(a[0]), int(a[1]), int(a[2]), int(a[3]))
     elif cmd == "key": key(a[0], int(a[1]) if len(a) > 1 else 1)
+    elif cmd == "wheel": wheel(int(a[0]), int(a[1]), int(a[2]) if len(a) > 2 else 1)
     elif cmd == "sleep": time.sleep(float(a[0]))
     elif cmd == "quit":
         try:

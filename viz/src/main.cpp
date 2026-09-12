@@ -20,10 +20,13 @@
 #include <imgui_impl_opengl3.h>
 #include <implot.h>
 
+#include "gl/gl_loader.hpp"
+#include "panels/fdm_panel.hpp"
 #include "panels/garch_panel.hpp"
 #include "panels/greeks_panel.hpp"
 #include "panels/kalman_panel.hpp"
 #include "panels/streaming_panel.hpp"
+#include "panels/vol_surface_panel.hpp"
 #include "quantviz/viz/scene_registry.hpp"
 
 namespace {
@@ -89,44 +92,58 @@ int main() {
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
 
-    // ------------------------------------------------------------------ scenes
-    quantviz::viz::SceneRegistry registry;
-    registry.add("Streaming", quantviz::viz::make_streaming_scene);
-    registry.add("Greeks", quantviz::viz::make_greeks_scene);
-    registry.add("GARCH", quantviz::viz::make_garch_scene);
-    registry.add("Kalman pair", quantviz::viz::make_kalman_scene);
-    if (!registry.select(0)) {
-        std::fprintf(stderr, "initial scene failed to start\n");
-        return 1;
-    }
+    // 3D 用の GL 関数を自前ロードする（設計書 §12.1）。失敗しても viewer は動かし続ける:
+    // 3D パネルは `glapi::gl_available()` を見て「OpenGL functions unavailable」表示に落ちる。
+    if (!quantviz::viz::glapi::gl_load())
+        std::fprintf(stderr, "gl_load() failed: 3D scenes will fall back to a text notice\n");
+    // 上で GL コンテキストに合わせて選んだ版を 3D レンダラのシェーダにも使わせる（出所は 1 つ）。
+    quantviz::viz::glapi::set_glsl_version(glsl_version);
 
-    // ------------------------------------------------------------------ frame loop
-    while (!glfwWindowShouldClose(window)) {
-        glfwPollEvents();
-        if (glfwGetWindowAttrib(window, GLFW_ICONIFIED) != 0) {
-            ImGui_ImplGlfw_Sleep(10);
-            continue;
+    // registry はこのスコープで閉じる: シーン（= GL オブジェクトを持つパネル）を、下の
+    // GUI シャットダウン（GL コンテキスト破棄）より前に必ず破棄するため。
+    {
+        // -------------------------------------------------------------- scenes
+        quantviz::viz::SceneRegistry registry;
+        registry.add("Streaming", quantviz::viz::make_streaming_scene);
+        registry.add("Greeks", quantviz::viz::make_greeks_scene);
+        registry.add("GARCH", quantviz::viz::make_garch_scene);
+        registry.add("Kalman pair", quantviz::viz::make_kalman_scene);
+        registry.add("Vol surface", quantviz::viz::make_vol_surface_scene);
+        registry.add("FDM American", quantviz::viz::make_fdm_scene);
+        if (!registry.select(0)) {
+            std::fprintf(stderr, "initial scene failed to start\n");
+            return 1;
         }
 
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
+        // -------------------------------------------------------------- frame loop
+        while (!glfwWindowShouldClose(window)) {
+            glfwPollEvents();
+            if (glfwGetWindowAttrib(window, GLFW_ICONIFIED) != 0) {
+                ImGui_ImplGlfw_Sleep(10);
+                continue;
+            }
 
-        draw_menu_bar(registry);
-        if (auto* scene = registry.current()) scene->draw();
+            ImGui_ImplOpenGL3_NewFrame();
+            ImGui_ImplGlfw_NewFrame();
+            ImGui::NewFrame();
 
-        ImGui::Render();
-        int display_w = 0, display_h = 0;
-        glfwGetFramebufferSize(window, &display_w, &display_h);
-        glViewport(0, 0, display_w, display_h);
-        glClearColor(0.08f, 0.08f, 0.10f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-        glfwSwapBuffers(window);
+            draw_menu_bar(registry);
+            if (auto* scene = registry.current()) scene->draw();
+
+            ImGui::Render();
+            int display_w = 0, display_h = 0;
+            glfwGetFramebufferSize(window, &display_w, &display_h);
+            glViewport(0, 0, display_w, display_h);
+            glClearColor(0.08f, 0.08f, 0.10f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+            glfwSwapBuffers(window);
+        }
+
+        if (auto* scene = registry.current()) scene->stop();  // 計算スレッドを join してから畳む
     }
 
     // ------------------------------------------------------------------ shutdown
-    if (auto* scene = registry.current()) scene->stop();  // 計算スレッドを join してから GUI を畳む
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImPlot::DestroyContext();

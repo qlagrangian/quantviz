@@ -120,6 +120,18 @@ concept Model = requires(M& m, const M& cm, double dt, const Command& c) {
 | `snapshot() const` | 現在状態の POD 射影。O(フィールド数)、アロケーションなし |
 | `apply(Command)` | `SetParam` / `Reset` を受ける。未知の `param_id` は**無視**。時計系コマンドは Runner が処理済みなので来ない前提だが、来ても無視する |
 
+グリッド大の状態（M2〜）は任意拡張の **`SurfaceModel`** 概念で扱う：
+
+```cpp
+template <class M>
+concept SurfaceModel = Model<M> && requires(const M& cm, typename M::Surface& s) {
+    typename M::Surface;                                   // trivially copyable な固定長 POD（数十〜数百 KB 可）
+    { cm.surface(s) } noexcept;                            // 現在の面を s に書く（ヒープなし）
+};
+```
+
+`Snapshot` はスカラと縮約値だけを載せて小さく保ち（リング経由）、`Surface` は `Runner` が持つ `bridge::TripleBuffer<Surface>`（最新 1 枚、書き手は決してブロックせず、読み手は裂けた値を見ない）を通す。`RunnerConfig::surface_every` で間引く。描画側は `Runner::poll_surface(Surface&)` で最新面を取り、`SurfaceMesh` に載せて GL レンダラで描く。
+
 ### 4.2 `Snapshot` の設計規則
 
 * 固定長 POD。`std::vector` / ポインタ / `std::string` 禁止。配列は `std::array`
@@ -151,6 +163,7 @@ struct Command { CommandType type; uint32_t param_id; double value; uint64_t see
 | R6 | `stop()` 後、`send()` が true を返していた Command は全て適用済み。`model()` を読んでも競合しない |
 | R7 | `start()` は冪等。デストラクタは join する |
 | R8 | `tick(elapsed)` は 1 ループ分の同期実行。`start()` 中に呼んではならない |
+| R9 | `SurfaceModel` の Runner は `surface_every` ステップごとに面を `TripleBuffer` へ publish し、`poll_surface` は最新 1 枚だけを返す（古い面は捨てる）。非 SurfaceModel の Runner にはチャネルが生えない（サイズ不変） |
 
 ---
 
@@ -200,8 +213,8 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | `stats/optim.hpp` ✅M1 | Nelder–Mead / BFGS（数値勾配 + Armijo） | `nelder_mead` / `bfgs`（値返し）と `*_into`（`OptimResult` 再利用で割り当てなし）, `OptimOptions`, 制約変換 `to_unit` / `to_positive` | `path` は常に非空で `front == x0`, `back == x`。非有限な目的関数では `converged=false` |
 | `math/mat.hpp` ✅M1 | 固定サイズ行列（`std::array`、ヒープなし） | `Mat<R,C>`, `transpose`, `inverse()`→`optional`（≤3×3 閉形式、`tol` は行列式スケールに対する相対値）, `is_symmetric`, `is_psd` | POD。NaN は全述語で拒否 |
 | `stats/kalman.hpp` ✅M1 | 線形カルマン（固定サイズ） | `predict(F,Q)`, `update(H,z,R)`→イノベーション（事前残差）, `state`, `cov`, `reset`, `skipped_updates` | Joseph 形 + 明示的対称化で共分散は対称・半正定値。NaN 観測・特異 S は状態を壊さずスキップして数える（例外なし） |
-| `pricing/fdm_cn.hpp` 🔜M2 | Crank–Nicolson + PSOR（American） | `init(grid)`, `step_backward()`, `values()`, `exercise_boundary()` | American ≥ intrinsic、≥ European |
-| `math/tridiag.hpp` 🔜M2 | Thomas 法 | `solve(a,b,c,d)` | 密行列解と一致 |
+| `pricing/fdm_cn.hpp` ✅M2 | Crank–Nicolson + PSOR（American）、Rannacher 起動、キンクのセル平均化 | `init(grid, params)`, `step_backward()`（t=0 で no-op）, `values()`, `value_at`, `delta_at`, `exercise_boundary()`, `last_psor_iterations/converged` | American ≥ intrinsic、≥ European。2 次収束（比 ≈ 4）。割り当ては init だけ |
+| `math/tridiag.hpp` ✅M2 | Thomas 法 | `tridiag_solve(a,b,c,d,x,work)`（in-place 可、ゼロ・非有限ピボットで false） | 密行列解と一致（相対 1e-12） |
 | `micro/order_book.hpp` 🔜M3 | 板・マッチング | `submit(limit/market)`, `cancel`, `best_bid/ask`, `depth(N)` | bid<ask、価格時間優先、数量保存 |
 | `models/hawkes.hpp` 🔜M3 | 自己励起過程 | `simulate(thinning)`, `intensity(t)`, `log_likelihood` | 分岐比 α/β<1 |
 | `pricing/lsm.hpp` 🔜M4 | Longstaff–Schwartz | `price(paths, basis)` | ≥ European（MC 誤差内） |
@@ -218,7 +231,7 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | `model_concept.hpp` ✅ | 契約 | `Model`, `SnapshotType` |
 | `sim_clock.hpp` ✅ | 時間変換 | 時間源なし・純ロジック。蓄積は一時停止中に止まる |
 | `runner.hpp` ✅ | 計算スレッド | `RunnerConfig` は非依存型（テンプレート引数違いの Runner 間で共有可）。`tick()` で同期テスト |
-| `triple_buffer.hpp` 🔜M2 | 「最新 1 枚」だけ欲しい大きな状態（グリッド）向け | サーフェスは履歴不要 → ring より triple buffer が適切 |
+| `triple_buffer.hpp` ✅M2 | 「最新 1 枚」だけ欲しい大きな状態（グリッド）向け SPSC 交換 | 3 スロット + 1 語の atomic 状態（back/middle/front の置換 + new ビット）。publish/read とも CAS は acq_rel（読み手がコピーしたスロットを書き手が再利用する WAR 方向にも HB が要る — TSan で実証）。`back()` は 2 世代前の面を含む使い回しスロット（毎回全フィールドを書く）。`Runner` は `SurfaceModel` のときだけこのチャネルを持つ（空基底で非対応 Model のサイズは不変） |
 
 ### 6.3 `scenes/`（core + bridge）
 
@@ -230,7 +243,8 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | Greeks ✅M1 | `GreeksModel` | S（GBM, 経路ボラは固定）, 64 ストライクの price/Δ/Γ/ν/Θ/ρ（`bs_price_strip` の SIMD 経路を本番使用）, Γ(S,T) 48×32 格子（r/σ/T が変わった時だけ再計算）, 真値 r/σ/T, seq — 16.5 KB（M1 の例外、SnapCap 256） | スポットショック（×倍率, 非正・非有限は無視）, r, 価格ボラ σ, T, ストライク幅 |
 | Garch ✅M1 | `GarchModel` | 合成 GARCH の r_t と σ²_t 真値、ローリング窓（既定 500 日、10 ステップごとに `garch_fit_into` で warm-start 再推定）の推定 σ²・(ω̂,α̂,β̂)・対数尤度、尤度面 L(α,β) 32×32（ω=ω̂ の断面、非定常点は有限最小値にクランプ）、最適化軌跡（先頭から等間引きで最大 64 点、終点 = 推定値）、seq — 9.8 KB（M1 の例外、SnapCap 256）。窓を広げた直後は埋まるまで推定を出さない | ω, α, β（真値。α+β ≥ kMax なら比を保って縮小）, optimizer（NM / BFGS）, 窓長 [50, 2048] |
 | Kalman ✅M1 | `KalmanPairModel` | x, y（y = β_t x + ε）, β 真値, β̂, β 分散, スプレッド（事後残差）, イノベーション（事前残差）, skipped（縮退観測のスキップ数）, seq — 96 B | 観測ノイズ, 状態ノイズ, 真の β（β_t は κ=0.002 で真値へ平均回帰するランダムウォーク。フィルタは F=1 を仮定する意図的な軽い誤特定） |
-| Fdm 🔜M2 | `FdmAmericanModel` | V(S) の現在ステップ, 行使境界, 残り反復数 | K, r, σ, q, グリッド |
+| VolSurface ✅M2 | `VolSurfaceModel`（SurfaceModel） | Snapshot: t, SSVI パラメータ, k/T 範囲, seq（80 B）。Surface: 64×32 の IV 格子 + 軸（8.6 KB、TripleBuffer 経由。パラメータ変更時だけ再計算） | σ_atm, ρ, η, γ（`ssvi_clamp` でクランプ） |
+| Fdm ✅M2 | `FdmAmericanModel`（SurfaceModel） | Snapshot（6.3 KB）: 現在時刻の V(S) 256 点、反復ごとの S*（最大 256）、残り反復数、status（PSOR 未収束）、V(S0)・Δ(S0)、パラメータ。Surface（162 KB）: 200×200 の V(S,t)（満期側から埋まる、未計算行は 0）。1 step = 1 後ろ向き反復、SetParam は即座に `init` し直して seq を 0 に戻す | K, r, σ, q, American/European, Call/Put, ω（グリッドは固定: S_max = 4K, 200×200） |
 | Lob 🔜M3 | `LobModel` | 上位 N レベル bid/ask, 直近約定, λ(t) | 到着率, Hawkes α/β, 大口注入 |
 | Lsm / Exec / Hjb 🔜M4 | 各 Model | パス束の縮約, 執行軌道, 価値関数格子 | シーン固有 |
 | Aad 🔜M5 | `AadModel` | Greeks（AAD / バンプ）, 計算時間, テープ長 | 入力 |
@@ -243,7 +257,8 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | `panels/streaming_panel.*` ✅ | Spot / Volatility / Control の 3 ウィンドウ |
 | `main.cpp` ✅ | GLFW + ImGui + ImPlot の起動・フレームループ・終了 |
 | `panels/{streaming,greeks,garch,kalman}_panel.*` ✅M1 | シーンごとに 1 パネル。`draw(Runner&)` + `make_<scene>_scene()`。共通部品は `panels/panel_common.hpp`（`now_seconds`, `kTradingDays`, `kPanelTop`, `setup_follow_axis`）と `viz/rate_meter.hpp`（受信レート EMA）。Reset 時は `prev_seq_` ガードでリング内の古い Snapshot を捨てる |
-| `gl/surface_renderer.*` 🔜M2 | グリッド → 三角形メッシュ → 法線 → 単純ライティング → カメラ。ImGui ウィンドウ内にテクスチャとして描く |
+| `gl/{math,camera,surface_mesh}.hpp`（vizcore）✅M2 | 列優先 `Mat4`、`look_at` / `perspective` / `inverse`、軌道カメラ `OrbitCamera`（project/unproject）、`SurfaceMesh`（N×M 格子 → 頂点 + 法線 + インデックス、z だけ更新・再確保なし、不等間隔軸でも 2 次精度の法線） |
+| `src/gl/{gl_loader,surface_renderer,surface_view}` ✅M2 | `glfwGetProcAddress` で GL 3.0 の 53 関数を自前ロード。FBO（DPI 対応）に Lambert + 高さ色 + 等高線で描き、`ImGui::Image` に貼る。`SurfaceView` がドラッグ回転・ホイールズーム・右ドラッグパン・R でリセット。`draw()` はアップロードしたかを返し、パネルは dirty フラグを sticky に扱う |
 | `clock_controls.hpp`（vizcore）✅M1 | 時計 UI の状態 `ClockControlState` と Command 生成の純関数（`toggle_pause`, `set_speed`, `step_once`, `reset`, `step_allowed`）。ImGui 非依存でテスト可能（VIZ-03） |
 | `panels/clock_panel.hpp` ✅M1 | 上記に ImGui を被せた共通ウィジェット `draw_clock_controls` と共通テレメトリ行 `draw_runner_telemetry`。全シーンの Control ウィンドウが使う |
 | `rate_meter.hpp`（vizcore）✅M1 | 受信 Snapshot レートの表示用メーター（0.25 s 窓 + 係数 0.2 の EMA）。時刻源を持たず壁時計を引数で受けるので単体テストできる（VIZ-05）。全パネルが 1 つずつ持つ |
@@ -298,9 +313,9 @@ M0 実測（GCC 13, -O3, Xeon 想定）：`push+pop ≈ 4.4 ns`、`StreamingMode
                                                                         → FBO → ImGui::Image
 ```
 
-* 頂点の x,y は固定（グリッド）。毎フレーム更新するのは z と法線のみ → `glBufferSubData`
-* カメラは軌道カメラ（マウスドラッグ回転、ホイールでズーム）。ImPlot3D を採用する場合はこの層を差し替えるだけ
-* 大きなグリッドは ring ではなく **triple buffer** で「最新 1 枚」を渡す
+* 頂点の x,y は固定（グリッド）。更新するのは z と法線のみ（CPU で `SurfaceMesh::update_normals`、GPU へは `glBufferSubData`）。アップロードは新しい面が届いたときだけ
+* カメラは軌道カメラ（マウスドラッグ回転、ホイールでズーム、右ドラッグでパン、R でホーム）。レンダラは三角形のみ描く（ラインは 2D の ImPlot に任せる）
+* 大きなグリッドは ring ではなく **triple buffer** で「最新 1 枚」を渡す（`SurfaceModel` + `Runner::poll_surface`）。GL 関数のロードに失敗した環境では 3D ウィンドウは文言にフォールバックし、2D と Control は動き続ける
 
 ### 9.4 UI → Command 規約
 
@@ -321,7 +336,7 @@ M0 実測（GCC 13, -O3, Xeon 想定）：`push+pop ≈ 4.4 ns`、`StreamingMode
 | UI からの不正値（負の σ、λ∉(0,1)、NaN） | コア側でクランプ／デフォルトへ。例外は投げない（`noexcept`） |
 | ring 満杯 | Snapshot は捨てて計数、Command は `send` が false。両方ノンブロッキング |
 | 未知の `param_id` | 無視 |
-| GLFW / GL 初期化失敗 | `main` が非 0 で終了。ログは stderr |
+| GLFW / GL 初期化失敗 | GLFW / コンテキスト作成の失敗は `main` が非 0 で終了。GL 3.0 関数のロード失敗（`gl_load()`）は stderr に欠けた関数名を出し、3D ウィンドウは「GL 未対応」の文言にフォールバックして viewer は続行する |
 | 数値の発散（FDM 不安定等） 🔜 | Snapshot に `status` フラグを載せ、描画が警告表示。コアは停止しない |
 | スレッド終了 | `Runner::stop()` が join まで責任を持つ。`jthread` で例外経路でも join |
 
@@ -343,6 +358,7 @@ M0 実測（GCC 13, -O3, Xeon 想定）：`push+pop ≈ 4.4 ns`、`StreamingMode
 ### 12.1 ツールチェーン
 
 * C++20（`concepts`, `std::jthread`, `std::stop_token`, `SeparatorText` 等）。GCC ≥ 12 / Clang ≥ 15 / MSVC ≥ 19.34
+* OpenGL（M2〜）: 3.0 core 相当の関数（VAO/VBO/EBO/FBO/シェーダ）だけを `viz/src/gl/gl_loader` が `glfwGetProcAddress` で自前ロードする。外部ローダ（glad 等）には依存しない。GL ヘッダを include するのは `viz/src/gl/` と `main.cpp` だけ
 * CMake ≥ 3.25、Ninja、vcpkg（manifest モード）。vcpkg なしの Linux ではシステム GLFW + FetchContent（imgui / implot）
 * 警告: `-Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wold-style-cast`（`quantviz::warnings`）。CI は `-Werror`
 * 依存ライブラリは `SYSTEM` include で警告対象外

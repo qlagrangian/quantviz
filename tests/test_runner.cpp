@@ -2,9 +2,12 @@
 // 時間に依存しない tick() を主に使い、スレッド起動は 1 ケースだけ統合テストとして持つ。
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 #include "quantviz/bridge/runner.hpp"
@@ -156,4 +159,119 @@ TEST_CASE("RUNNER-08: start is idempotent and the destructor joins a running thr
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }  // ここでハングやクラッシュがなければ合格
     SUCCEED("destructor joined the worker thread");
+}
+
+// --------------------------------------------------------------------------- M2: 面チャネル
+
+namespace {
+
+/// 面（グリッド大の状態の代用）。step 数と、それから決まるセル値・チェックサムを持つ。
+struct CounterSurface {
+    std::uint64_t          steps    = 0;
+    std::array<double, 16> cells{};
+    double                 checksum = 0.0;
+};
+
+/// CounterModel と同じ状態を持ち、surface() だけを足した Model（sizeof(M) は CounterModel と同一）。
+class SurfaceCounterModel {
+public:
+    using Snapshot = CounterSnapshot;
+    using Surface  = CounterSurface;
+
+    void     step(double dt) { ++s_.steps; s_.last_dt = dt; }
+    Snapshot snapshot() const noexcept { return s_; }
+    void     apply(const Command& c) {
+        if (c.type == CommandType::SetParam && c.param_id == 1) s_.param = c.value;
+        if (c.type == CommandType::Reset) { s_.steps = 0; ++s_.resets; }
+    }
+    /// 現在の面を out に書く（ヒープなし・例外なし）。
+    void surface(Surface& out) const noexcept {
+        out.steps  = s_.steps;
+        double sum = 0.0;
+        for (std::size_t i = 0; i < out.cells.size(); ++i) {
+            out.cells[i] = static_cast<double>(s_.steps) + static_cast<double>(i);
+            sum += out.cells[i];
+        }
+        out.checksum = sum;
+    }
+
+private:
+    Snapshot s_{};
+};
+static_assert(Model<SurfaceCounterModel>);
+
+/// 期待チェックサム: Σ_{i<16} (steps + i) = 16·steps + 120
+double expected_checksum(std::uint64_t steps) {
+    return 16.0 * static_cast<double>(steps) + 120.0;
+}
+
+/// 空基底最適化（EBO）の確認用。非 SurfaceModel の面チャネルが本当に「サイズ 0 の基底」なら、
+/// それに char を 1 つ足しただけの型は 1 バイトに収まる。崩れた場合は RUNNER-09 の
+/// STATIC_REQUIRE がコンパイル時に失敗する（実行時のテスト失敗ではなくビルドエラーになる）。
+struct EboProbe : detail::SurfaceChannel<CounterModel> {
+    char c;
+};
+
+}  // namespace
+
+TEST_CASE("RUNNER-09: a SurfaceModel runner publishes the latest surface every surface_every steps; "
+          "a plain model grows no channel",
+          "[runner][unit]") {
+    STATIC_REQUIRE(SurfaceModel<SurfaceCounterModel>);
+    STATIC_REQUIRE_FALSE(SurfaceModel<CounterModel>);
+    // 非 SurfaceModel の面チャネルは空クラスで、空基底として畳まれる（Runner は 1 バイトも太らない）
+    STATIC_REQUIRE(std::is_empty_v<detail::SurfaceChannel<CounterModel>>);
+    STATIC_REQUIRE(sizeof(EboProbe) == 1);
+    // 面チャネルは SurfaceModel のときだけ生える（両 Model は同じ状態なので sizeof(M) は等しい）
+    STATIC_REQUIRE(sizeof(CounterModel) == sizeof(SurfaceCounterModel));
+    STATIC_REQUIRE(sizeof(Runner<SurfaceCounterModel>) > sizeof(Runner<CounterModel>));
+
+    SECTION("surface_every = 1: poll_surface returns only the newest surface, older ones are dropped") {
+        Runner<SurfaceCounterModel> r(SurfaceCounterModel{}, cfg(100.0));
+        CounterSurface              surf{};
+        CHECK_FALSE(r.poll_surface(surf));  // まだ何も出ていない
+        CHECK(r.surfaces_published() == 0);
+
+        CHECK(r.tick(0.1) == 10);
+        CHECK(r.total_steps() == 10);
+        CHECK(r.surfaces_published() == 10);
+
+        REQUIRE(r.poll_surface(surf));
+        CHECK(surf.steps == 10);  // 最新 1 枚だけ。途中の 9 枚は捨てられる
+        CHECK(surf.checksum == expected_checksum(10));
+        CHECK_FALSE(r.poll_surface(surf));  // 新しいものが無ければ false
+        CHECK(surf.steps == 10);
+
+        // Snapshot リングは従来どおり全ステップ分出る（面チャネルは干渉しない）
+        CHECK(drain(r).size() == 10);
+    }
+
+    SECTION("surface_every = 3 publishes only on multiples of 3") {
+        RunnerConfig c   = cfg(100.0);
+        c.surface_every  = 3;
+        Runner<SurfaceCounterModel> r(SurfaceCounterModel{}, c);
+
+        CHECK(r.tick(0.1) == 10);  // 3, 6, 9 の 3 回だけ publish
+        CHECK(r.surfaces_published() == 3);
+
+        CounterSurface surf{};
+        REQUIRE(r.poll_surface(surf));
+        CHECK(surf.steps == 9);
+        CHECK(surf.checksum == expected_checksum(9));
+        CHECK_FALSE(r.poll_surface(surf));
+
+        CHECK(r.tick(0.1) == 10);  // 12, 15, 18 → 累計 6
+        CHECK(r.surfaces_published() == 6);
+        REQUIRE(r.poll_surface(surf));
+        CHECK(surf.steps == 18);
+    }
+
+    SECTION("surface_every = 0 is clamped to 1, like publish_every") {
+        RunnerConfig c  = cfg(100.0);
+        c.surface_every = 0;
+        Runner<SurfaceCounterModel> r(SurfaceCounterModel{}, c);
+        CHECK(r.config().surface_every == 1);
+        r.tick(0.05);
+        CHECK(r.surfaces_published() == 5);
+    }
 }

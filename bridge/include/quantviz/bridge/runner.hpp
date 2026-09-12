@@ -3,10 +3,14 @@
 //
 //   描画スレッド ──send(Command)──▶ [commands_ ring] ──▶ Runner::dispatch ──▶ SimClock / Model::apply
 //   描画スレッド ◀──poll(Snapshot)── [snapshots_ ring] ◀── Runner::publish ◀── Model::snapshot()
+//   描画スレッド ◀─poll_surface()─── [surface_ triple buffer] ◀─ Runner::publish_surface ◀─ Model::surface()
 //
 // * Model と SimClock は計算スレッドが所有する。start() 後に外から触ってはならない。
 // * tick(elapsed) は 1 ループ分を同期実行する。テストと単一スレッド運用のために公開している。
 // * リングが満杯なら Snapshot は捨てて dropped_ を数える（コアを止めない）。
+// * Model が SurfaceModel を満たすときだけ「面チャネル」が生える（M2）。グリッド大の状態は履歴が
+//   不要なので、リングではなく TripleBuffer で最新 1 枚だけを渡す。満たさない Model では
+//   detail::SurfaceChannel が空の基底クラスになり、Runner のサイズも振る舞いも一切変わらない。
 
 #include <atomic>
 #include <chrono>
@@ -20,19 +24,50 @@
 #include "quantviz/bridge/model_concept.hpp"
 #include "quantviz/bridge/sim_clock.hpp"
 #include "quantviz/bridge/spsc_ring.hpp"
+#include "quantviz/bridge/triple_buffer.hpp"
 
 namespace quantviz::bridge {
+
+namespace detail {
+
+/// 面チャネル。Runner の基底として使う。
+/// 非 SurfaceModel では空クラス → 空基底最適化（EBO）で Runner のサイズも API も一切変わらない。
+/// MSVC が EBO を適用するのは「空の基底が 1 つだけ」の場合に限られる。将来 2 本目の空チャネル基底を
+/// 足すなら Runner に __declspec(empty_bases) が要る（RUNNER-09 の EboProbe がコンパイル時に捕まえる）。
+/// SurfaceModel のときだけ TripleBuffer と描画スレッド側 API（poll_surface / surfaces_published）が生える。
+/// メンバ関数のシグネチャを基底側に置くのは、Runner 側に `requires` 付きで書くと
+/// 非 SurfaceModel のクラス実体化時に `typename M::Surface` の置換が hard error になるため。
+template <class M, bool HasSurface = SurfaceModel<M>>
+struct SurfaceChannel {};
+
+template <class M>
+struct SurfaceChannel<M, true> {
+    using Surface = typename M::Surface;
+
+    /// 描画スレッド専用。未読の面があれば out に取り込み true（常に最新 1 枚。古い面は捨てられる）。
+    bool          poll_surface(Surface& out) noexcept { return surface_.read(out); }
+    std::uint64_t surfaces_published() const noexcept {
+        return surfaces_published_.load(std::memory_order_relaxed);
+    }
+
+protected:
+    TripleBuffer<Surface>      surface_{};              ///< 最新 1 枚（計算 → 描画）
+    std::atomic<std::uint64_t> surfaces_published_{0};  ///< publish した面の総数
+};
+
+}  // namespace detail
 
 /// Runner の設定。テンプレート引数（リング容量）に依存しないよう、クラス外に置く。
 struct RunnerConfig {
     double                    dt            = 1.0 / 252.0;  ///< 1 sim ステップの時間（年）
     SimClock::Config          clock{};
     std::size_t               publish_every = 1;            ///< k ステップに 1 回 Snapshot を出す
+    std::size_t               surface_every = 1;            ///< k ステップに 1 回 面を出す（SurfaceModel）
     std::chrono::microseconds idle_sleep{200};              ///< 進めるものが無いときの休止
 };
 
 template <Model M, std::size_t SnapshotCapacity = 4096, std::size_t CommandCapacity = 256>
-class Runner {
+class Runner : public detail::SurfaceChannel<M> {
 public:
     using Snapshot = typename M::Snapshot;
     using Config   = RunnerConfig;
@@ -42,6 +77,7 @@ public:
 
     Runner(M model, Config cfg) : model_(std::move(model)), cfg_(cfg), clock_(cfg.clock) {
         if (cfg_.publish_every == 0) cfg_.publish_every = 1;
+        if (cfg_.surface_every == 0) cfg_.surface_every = 1;
     }
     ~Runner() { stop(); }
 
@@ -55,6 +91,9 @@ public:
     std::uint64_t total_steps() const noexcept { return steps_.load(std::memory_order_relaxed); }
     std::size_t   queued_snapshots() const noexcept { return snapshots_.size_approx(); }
     bool          running() const noexcept { return thread_.joinable(); }
+
+    // 面チャネル（SurfaceModel のときだけ）: poll_surface / surfaces_published は
+    // detail::SurfaceChannel<M> から継承する。
 
     void start() {
         if (thread_.joinable()) return;
@@ -77,6 +116,9 @@ public:
             model_.step(cfg_.dt);
             const std::uint64_t s = steps_.fetch_add(1, std::memory_order_relaxed) + 1;
             if (s % cfg_.publish_every == 0) publish();
+            if constexpr (SurfaceModel<M>) {
+                if (s % cfg_.surface_every == 0) publish_surface();
+            }
         }
         return n;
     }
@@ -89,6 +131,15 @@ public:
 private:
     void publish() {
         if (!snapshots_.try_push(model_.snapshot())) dropped_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    /// 面は「最新 1 枚」なので、リングと違い落とす数は数えない（古い面は黙って捨てられる）。
+    void publish_surface() noexcept {
+        if constexpr (SurfaceModel<M>) {
+            model_.surface(this->surface_.back());
+            this->surface_.publish();
+            this->surfaces_published_.fetch_add(1, std::memory_order_relaxed);
+        }
     }
 
     void drain_commands() {

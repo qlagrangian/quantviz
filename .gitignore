@@ -13,3 +13,4 @@ vcpkg_installed/
 build-*/
 imgui.ini
 *.whl
+__pycache__/

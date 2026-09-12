@@ -41,7 +41,7 @@ jobs:
           cmake -S . -B build-tsan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DQUANTVIZ_BUILD_VIZ=OFF \
                 -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
           cmake --build build-tsan -j
-          ctest --test-dir build-tsan --output-on-failure -R "RING|RUNNER|VIZ"
+          ctest --test-dir build-tsan --output-on-failure -R "RING|RUNNER|VIZ|TRIPLE"
 
   simd-legs:
     name: BS strip bit-identity under FMA / AVX2 (${{ matrix.name }})

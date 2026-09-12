@@ -118,6 +118,7 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 | RUNNER-06 | Command リング満杯なら `send` は false（ブロックしない） | U | ✅ |
 | RUNNER-07 | スレッド実行で Snapshot の seq が単調増加。`stop()` 前に `send` が true を返した Command は `stop()` 後に必ず適用済み。`running()` が正しい | C | ✅ |
 | RUNNER-08 | `start()` は冪等。デストラクタは走行中スレッドを join する（ハングしない） | C | ✅ |
+| RUNNER-09 | `SurfaceModel` を満たす Model の Runner は `surface_every` ステップごとに面を `TripleBuffer` へ publish し、`poll_surface` は最新 1 枚だけを返す（古い面は捨てる）。非 SurfaceModel の Runner にはチャネルが生えない | U | ✅ |
 
 ### 3.4 GBM — `core/models/gbm.hpp` → `tests/test_gbm.cpp`
 
@@ -279,74 +280,74 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| GL-01 | look-at / perspective 行列が参照値と一致（相対 1e-6） | N | ⬜ |
-| GL-02 | 軌道カメラは回転で目標点との距離を保つ | P | ⬜ |
-| GL-03 | unproject(project(p)) = p（絶対 1e-5） | N | ⬜ |
-| GL-04 | アスペクト比変更で射影行列の [0][0] が 1/aspect に比例 | U | ⬜ |
+| GL-01 | look-at / perspective 行列が参照値と一致（相対 1e-6） | N | ✅ |
+| GL-02 | 軌道カメラは回転で目標点との距離を保つ | P | ✅ |
+| GL-03 | unproject(project(p)) = p（絶対 1e-5） | N | ✅ |
+| GL-04 | アスペクト比変更で射影行列の [0][0] が 1/aspect に比例 | U | ✅ |
 
 ### 5.2 SURF — `viz/gl/surface_mesh.hpp`
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| SURF-01 | N×M グリッドで頂点 N·M、三角形 2(N−1)(M−1) | U | ⬜ |
-| SURF-02 | 全インデックスが頂点数未満 | P | ⬜ |
-| SURF-03 | 全法線が単位長（1e-6） | P | ⬜ |
-| SURF-04 | 平面 z=const の法線は全て (0,0,1) | N | ⬜ |
-| SURF-05 | z 更新でバッファのポインタ・サイズが変わらない（再アロケーションなし） | U | ⬜ |
-| SURF-06 | z=f(x,y) の既知関数で法線が解析勾配と一致（1e-3） | N | ⬜ |
+| SURF-01 | N×M グリッドで頂点 N·M、三角形 2(N−1)(M−1) | U | ✅ |
+| SURF-02 | 全インデックスが頂点数未満 | P | ✅ |
+| SURF-03 | 全法線が単位長（1e-6） | P | ✅ |
+| SURF-04 | 平面 z=const の法線は全て (0,0,1) | N | ✅ |
+| SURF-05 | z 更新でバッファのポインタ・サイズが変わらない（再アロケーションなし） | U | ✅ |
+| SURF-06 | z=f(x,y) の既知関数で法線が解析勾配と一致（1e-3） | N | ✅ |
 
 ### 5.3 TRIPLE — `bridge/triple_buffer.hpp`
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| TRIPLE-01 | 読み手は常に最後に publish された値を見る | U | ⬜ |
-| TRIPLE-02 | 書き手は決してブロックしない（読み手が遅くても） | C | ⬜ |
-| TRIPLE-03 | 読み手が裂けた値（torn read）を観測しない（各スロットにチェックサム、1e6 回） | C | ⬜ |
-| TRIPLE-04 | 新データが無ければ `read` は false | U | ⬜ |
-| TRIPLE-05 | T は trivially copyable（`static_assert`） | K | ⬜ |
+| TRIPLE-01 | 読み手は常に最後に publish された値を見る | U | ✅ |
+| TRIPLE-02 | 書き手は決してブロックしない（読み手が遅くても） | C | ✅ |
+| TRIPLE-03 | 読み手が裂けた値（torn read）を観測しない（各スロットにチェックサム、1e6 回） | C | ✅ |
+| TRIPLE-04 | 新データが無ければ `read` は false | U | ✅ |
+| TRIPLE-05 | T は trivially copyable（`static_assert`） | K | ✅ |
 
 ### 5.4 VOLSURF — `core/pricing/vol_surface.hpp`, `scenes/vol_surface_model.hpp`
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| VOLSURF-01 | 全 (K,T) で IV > 0 | P | ⬜ |
-| VOLSURF-02 | 既定パラメータでカレンダー裁定なし（総分散 σ²T が T で単調増大） | P | ⬜ |
-| VOLSURF-03 | スキュー 0 でスマイルが ATM 対称 | N | ⬜ |
-| VOLSURF-04 | Snapshot 格子は固定サイズ・POD、SetParam で形が変わる | K | ⬜ |
+| VOLSURF-01 | 全 (K,T) で IV > 0 | P | ✅ |
+| VOLSURF-02 | 既定パラメータでカレンダー裁定なし（総分散 σ²T が T で単調増大）。`ssvi_calendar_arbitrage_free` は Gatheral–Jacquier Thm 4.1 の条件と η(1+\|ρ\|) ≤ 2 の翼バンドの連言（後者は十分条件） | P | ✅ |
+| VOLSURF-03 | スキュー 0 でスマイルが ATM 対称 | N | ✅ |
+| VOLSURF-04 | 面（`Surface`, 64×32, 8.6 KB）は固定サイズ・POD で `surface()` が全フィールドを書く。SetParam で次の `surface()` から形が変わり、apply は seq を動かさない。Snapshot は 80 B。Runner の `poll_surface` 往復 | K | ✅ |
 
 ### 5.5 TRIDIAG — `core/math/tridiag.hpp`
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| TRIDIAG-01 | n=5 で密行列解と一致（相対 1e-12） | N | ⬜ |
-| TRIDIAG-02 | 単位行列で x = d | U | ⬜ |
-| TRIDIAG-03 | n=1 が動く | U | ⬜ |
-| TRIDIAG-04 | 対角優位ランダム n=1000 の残差 ‖Ax−d‖ ≤ 1e-10 | N | ⬜ |
+| TRIDIAG-01 | n=5 で密行列解と一致（相対 1e-12） | N | ✅ |
+| TRIDIAG-02 | 単位行列で x = d | U | ✅ |
+| TRIDIAG-03 | n=1 が動く | U | ✅ |
+| TRIDIAG-04 | 対角優位ランダム n=1000 の残差 ‖Ax−d‖ ≤ 1e-10 | N | ✅ |
 
 ### 5.6 FDM — `core/pricing/fdm_cn.hpp`
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| FDM-01 | 格子 (S_max, N, M) と境界条件（S=0, S=S_max）が設定通り | U | ⬜ |
-| FDM-02 | CN European call が BS と一致（N=M=200、相対 1e-3） | N | ⬜ |
-| FDM-03 | N を 2 倍にすると誤差が約 1/4（収束次数 ≈ 2） | N | ⬜ |
-| FDM-04 | 格子上でプット・コール・パリティ（1e-3） | N | ⬜ |
-| FDM-05 | 格子から求めた Δ が BS Δ と一致（1e-2） | N | ⬜ |
-| FDM-06 | American put ≥ European put（全格子点） | P | ⬜ |
-| FDM-07 | American ≥ 本源的価値（全格子点） | P | ⬜ |
-| FDM-08 | q=0 の American call = European call（早期行使なし） | N | ⬜ |
-| FDM-09 | プットの行使境界 S*(t) は満期に向かって単調非減少 | P | ⬜ |
-| FDM-10 | PSOR が ω∈(1,2) で最大反復内に収束 | U | ⬜ |
-| FDM-11 | `step_backward` を M 回で t が T→0、以後は no-op | U | ⬜ |
+| FDM-01 | 格子 (S_max, N, M) と境界条件（S=0, S=S_max）が設定通り | U | ✅ |
+| FDM-02 | CN European call が BS と一致（N=M=200、相対 1e-3。K が格子点上なら 5e-5、格子点間なら 9e-4 — 線形補間の h²Γ/8） | N | ✅ |
+| FDM-03 | N を 2 倍にすると誤差が約 1/4（収束次数 ≈ 2。実測比 4.14 / 4.03。2 次はキンクのセル平均化で得る。Rannacher 起動は小さい M での Γ の振動抑制を担い、FDM-05 の節で守る） | N | ✅ |
+| FDM-04 | 格子上でプット・コール・パリティ（1e-3） | N | ✅ |
+| FDM-05 | 格子から求めた Δ が BS Δ と一致（1e-2） | N | ✅ |
+| FDM-06 | American put ≥ European put（全格子点） | P | ✅ |
+| FDM-07 | American ≥ 本源的価値（全格子点） | P | ✅ |
+| FDM-08 | q=0 の American call = European call（早期行使なし） | N | ✅ |
+| FDM-09 | プットの行使境界 S*(t) は満期に向かって単調非減少 | P | ✅ |
+| FDM-10 | PSOR が ω∈(1,2) で最大反復内に収束 | U | ✅ |
+| FDM-11 | `step_backward` を M 回で t が T→0、以後は no-op | U | ✅ |
 
 ### 5.7 FDMSCENE — `scenes/fdm_american_model.hpp`
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| FDMSCENE-01 | Model 契約充足、Snapshot（V(S) 固定 N, 行使境界, 残反復数, status）は POD | K | ⬜ |
-| FDMSCENE-02 | 1 `step` = 1 後ろ向き反復（残反復数が 1 減る） | U | ⬜ |
-| FDMSCENE-03 | M ステップ後の S0 における値 = `fdm_cn` 単体の価格 | D | ⬜ |
-| FDMSCENE-04 | Reset で満期ペイオフに戻る | U | ⬜ |
+| FDMSCENE-01 | Model 契約充足、Snapshot（V(S) 固定 N, 行使境界, 残反復数, status）は POD | K | ✅ |
+| FDMSCENE-02 | 1 `step` = 1 後ろ向き反復（残反復数が 1 減る） | U | ✅ |
+| FDMSCENE-03 | M ステップ後の S0 における値 = `fdm_cn` 単体の価格 | D | ✅ |
+| FDMSCENE-04 | Reset で満期ペイオフに戻る | U | ✅ |
 
 ---
 
@@ -486,7 +487,7 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 | BENCH-01 | SpscRing push+pop（Snapshot 72 B） | < 20 ns | M0 | ✅ 4.4 ns |
 | BENCH-02 | StreamingModel step+snapshot | < 100 ns | M0 | ✅ 39 ns |
 | BENCH-03 | BS ストリップ SIMD vs スカラ（N=1024、厳密版: BS-10 で bit 一致） | ≥ 1.2×（改定） | M1 | ✅ 1.19〜1.28×（GCC 15, SSE2〜AVX-512） |
-| BENCH-04 | サーフェス 200×200 の z・法線更新 | < 2 ms | M2 | ⬜ |
+| BENCH-04 | サーフェス 200×200 の z・法線更新 | < 2 ms | M2 | ✅ 0.22 ms（加重中心差分、GCC 15 -O3） |
 | BENCH-05 | マッチングエンジン 1e6 注文/秒（dropped 0） | ≥ 1e6/s | M3 | ⬜ |
 | BENCH-06 | AAD 全 Greeks / 価格 1 回 | ≤ 5× | M5 | ⬜ |
 
