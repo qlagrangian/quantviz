@@ -235,8 +235,17 @@ public:
     // -----------------------------------------------------------------------
 
     /// GBM の 1 ステップ: s · exp(drift + vol · z)。generate_paths とテストが同じ式を共有してビット一致を保つ。
+    /// 指数の中は FMA を明示する（black_scholes.hpp と同じ FP_FAST_FMA ゲート）: -mfma 付きのビルドでは
+    /// コンパイラが `drift + vol * z` をインライン先ごとに縮約したりしなかったりして、同じ関数の呼び出し
+    /// 同士で最終ビットがずれる（FMA CI レッグで LSM-01 の再構成検査が落ちた）。std::fma と書けば
+    /// 縮約の有無が文脈に依存しなくなり、FMA の無い構成ではそもそも縮約されないので、どちらでも
+    /// 「同じ入力 → 同じビット」が成り立つ。
     [[nodiscard]] static double gbm_step(double s, double drift, double vol, double z) noexcept {
+#if defined(FP_FAST_FMA)
+        return s * std::exp(std::fma(vol, z, drift));
+#else
         return s * std::exp(drift + vol * z);
+#endif
     }
 
     /// p のパスを paths（n_paths × (n_steps+1) row-major）に生成する。対 j のステップ k で Z を 1 本引き、
