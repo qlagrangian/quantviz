@@ -120,6 +120,18 @@ concept Model = requires(M& m, const M& cm, double dt, const Command& c) {
 | `snapshot() const` | 現在状態の POD 射影。O(フィールド数)、アロケーションなし |
 | `apply(Command)` | `SetParam` / `Reset` を受ける。未知の `param_id` は**無視**。時計系コマンドは Runner が処理済みなので来ない前提だが、来ても無視する |
 
+グリッド大の状態（M2〜）は任意拡張の **`SurfaceModel`** 概念で扱う：
+
+```cpp
+template <class M>
+concept SurfaceModel = Model<M> && requires(const M& cm, typename M::Surface& s) {
+    typename M::Surface;                                   // trivially copyable な固定長 POD（数十〜数百 KB 可）
+    { cm.surface(s) } noexcept;                            // 現在の面を s に書く（ヒープなし）
+};
+```
+
+`Snapshot` はスカラと縮約値だけを載せて小さく保ち（リング経由）、`Surface` は `Runner` が持つ `bridge::TripleBuffer<Surface>`（最新 1 枚、書き手は決してブロックせず、読み手は裂けた値を見ない）を通す。`RunnerConfig::surface_every` で間引く。描画側は `Runner::poll_surface(Surface&)` で最新面を取り、`SurfaceMesh` に載せて GL レンダラで描く。
+
 ### 4.2 `Snapshot` の設計規則
 
 * 固定長 POD。`std::vector` / ポインタ / `std::string` 禁止。配列は `std::array`
@@ -151,6 +163,7 @@ struct Command { CommandType type; uint32_t param_id; double value; uint64_t see
 | R6 | `stop()` 後、`send()` が true を返していた Command は全て適用済み。`model()` を読んでも競合しない |
 | R7 | `start()` は冪等。デストラクタは join する |
 | R8 | `tick(elapsed)` は 1 ループ分の同期実行。`start()` 中に呼んではならない |
+| R9 | `SurfaceModel` の Runner は `surface_every` ステップごとに面を `TripleBuffer` へ publish し、`poll_surface` は最新 1 枚だけを返す（古い面は捨てる）。非 SurfaceModel の Runner にはチャネルが生えない（サイズ不変） |
 
 ---
 
@@ -343,6 +356,7 @@ M0 実測（GCC 13, -O3, Xeon 想定）：`push+pop ≈ 4.4 ns`、`StreamingMode
 ### 12.1 ツールチェーン
 
 * C++20（`concepts`, `std::jthread`, `std::stop_token`, `SeparatorText` 等）。GCC ≥ 12 / Clang ≥ 15 / MSVC ≥ 19.34
+* OpenGL（M2〜）: 3.0 core 相当の関数（VAO/VBO/EBO/FBO/シェーダ）だけを `viz/src/gl/gl_loader` が `glfwGetProcAddress` で自前ロードする。外部ローダ（glad 等）には依存しない。GL ヘッダを include するのは `viz/src/gl/` と `main.cpp` だけ
 * CMake ≥ 3.25、Ninja、vcpkg（manifest モード）。vcpkg なしの Linux ではシステム GLFW + FetchContent（imgui / implot）
 * 警告: `-Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wold-style-cast`（`quantviz::warnings`）。CI は `-Werror`
 * 依存ライブラリは `SYSTEM` include で警告対象外
