@@ -280,21 +280,21 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| GL-01 | look-at / perspective 行列が参照値と一致（相対 1e-6） | N | ⬜ |
-| GL-02 | 軌道カメラは回転で目標点との距離を保つ | P | ⬜ |
-| GL-03 | unproject(project(p)) = p（絶対 1e-5） | N | ⬜ |
-| GL-04 | アスペクト比変更で射影行列の [0][0] が 1/aspect に比例 | U | ⬜ |
+| GL-01 | look-at / perspective 行列が参照値と一致（相対 1e-6） | N | ✅ |
+| GL-02 | 軌道カメラは回転で目標点との距離を保つ | P | ✅ |
+| GL-03 | unproject(project(p)) = p（絶対 1e-5） | N | ✅ |
+| GL-04 | アスペクト比変更で射影行列の [0][0] が 1/aspect に比例 | U | ✅ |
 
 ### 5.2 SURF — `viz/gl/surface_mesh.hpp`
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| SURF-01 | N×M グリッドで頂点 N·M、三角形 2(N−1)(M−1) | U | ⬜ |
-| SURF-02 | 全インデックスが頂点数未満 | P | ⬜ |
-| SURF-03 | 全法線が単位長（1e-6） | P | ⬜ |
-| SURF-04 | 平面 z=const の法線は全て (0,0,1) | N | ⬜ |
-| SURF-05 | z 更新でバッファのポインタ・サイズが変わらない（再アロケーションなし） | U | ⬜ |
-| SURF-06 | z=f(x,y) の既知関数で法線が解析勾配と一致（1e-3） | N | ⬜ |
+| SURF-01 | N×M グリッドで頂点 N·M、三角形 2(N−1)(M−1) | U | ✅ |
+| SURF-02 | 全インデックスが頂点数未満 | P | ✅ |
+| SURF-03 | 全法線が単位長（1e-6） | P | ✅ |
+| SURF-04 | 平面 z=const の法線は全て (0,0,1) | N | ✅ |
+| SURF-05 | z 更新でバッファのポインタ・サイズが変わらない（再アロケーションなし） | U | ✅ |
+| SURF-06 | z=f(x,y) の既知関数で法線が解析勾配と一致（1e-3） | N | ✅ |
 
 ### 5.3 TRIPLE — `bridge/triple_buffer.hpp`
 
@@ -487,7 +487,7 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 | BENCH-01 | SpscRing push+pop（Snapshot 72 B） | < 20 ns | M0 | ✅ 4.4 ns |
 | BENCH-02 | StreamingModel step+snapshot | < 100 ns | M0 | ✅ 39 ns |
 | BENCH-03 | BS ストリップ SIMD vs スカラ（N=1024、厳密版: BS-10 で bit 一致） | ≥ 1.2×（改定） | M1 | ✅ 1.19〜1.28×（GCC 15, SSE2〜AVX-512） |
-| BENCH-04 | サーフェス 200×200 の z・法線更新 | < 2 ms | M2 | ⬜ |
+| BENCH-04 | サーフェス 200×200 の z・法線更新 | < 2 ms | M2 | ✅ 0.22 ms（加重中心差分、GCC 15 -O3） |
 | BENCH-05 | マッチングエンジン 1e6 注文/秒（dropped 0） | ≥ 1e6/s | M3 | ⬜ |
 | BENCH-06 | AAD 全 Greeks / 価格 1 回 | ≤ 5× | M5 | ⬜ |
 
