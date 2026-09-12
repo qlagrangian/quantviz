@@ -425,13 +425,13 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| AC-01 | 閉形式軌道 x_j = X·sinh(κ(T−t_j))/sinh(κT) と一致（相対 1e-10） | N | ⬜ |
-| AC-02 | Σ 取引量 = X（絶対 1e-9） | P | ⬜ |
-| AC-03 | λ=0 で線形（TWAP） | N | ⬜ |
-| AC-04 | λ 増大で前倒し（全内点で残量が小さくなる） | P | ⬜ |
-| AC-05 | 期待コスト・分散の閉形式が Monte Carlo と一致（4 SE） | S | ⬜ |
-| AC-06 | フロンティア: λ↑ でコスト↑・分散↓ | P | ⬜ |
-| AC-07 | κ = √(λσ²/η) の実装が定義と一致 | U | ⬜ |
+| AC-01 | 閉形式軌道 x_j = X·sinh(κ(T−t_j))/sinh(κT) と一致（相対 1e-10） | N | ✅ |
+| AC-02 | Σ 取引量 = X（絶対 1e-9） | P | ✅ |
+| AC-03 | λ=0 で線形（TWAP） | N | ✅ |
+| AC-04 | λ 増大で前倒し（全内点で残量が小さくなる） | P | ✅ |
+| AC-05 | 期待コスト・分散の閉形式が Monte Carlo と一致（4 SE） | S | ✅ |
+| AC-06 | フロンティア: λ↑ でコスト↑・分散↓ | P | ✅ |
+| AC-07 | κ が定義 cosh(κτ)−1 = κ̃²τ²/2 を満たす（asinh 形、λ=0 で厳密 0）。κT ≫ 700 でも軌道・コストが有限（sinh 比の溢れなし）、η̃ の床、`ac_cost_mc(n_sim=0)` = {0,0} | U | ✅ |
 | ACSCENE-01 | Model 契約充足、Snapshot（λ 別軌道 固定 L 本, フロンティア格子）は POD | K | ⬜ |
 | ACSCENE-02 | SetParam(λ) で軌道が変わる | U | ⬜ |
 | ACSCENE-03 | （オプション）M3 の板に流したときの実現コストが期待コスト ± 4 SE | S | ⬜ |
@@ -440,12 +440,12 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| HJB-01 | CRRA で最適比率 π* = (μ−r)/(γσ²) が全 w で定数（1e-3） | N | ⬜ |
-| HJB-02 | 価値関数が w で凹 | P | ⬜ |
-| HJB-03 | 価値関数が w で単調増加 | P | ⬜ |
-| HJB-04 | 終端条件 V(w,T) = U(w) | U | ⬜ |
-| HJB-05 | 格子細分で解析解への誤差が減少 | N | ⬜ |
-| HJB-06 | 時間整合: T/2 から V(·,T/2) を終端として解いた結果 = 全区間解 | N | ⬜ |
+| HJB-01 | CRRA で最適比率 π* = (μ−r)/(γσ²) が全 w で定数（1e-3。内側 90 % は実測 1.5e-5）。制約が効く場合（μ<r ⇒ π*=0、γ=0.1 ⇒ π*=kHjbPiMax）も制約付き閉形式と一致し、有限・単調 | N | ✅ |
+| HJB-02 | 価値関数が w で凹 | P | ✅ |
+| HJB-03 | 価値関数が w で単調増加 | P | ✅ |
+| HJB-04 | 終端条件 V(w,T) = U(w)。閉形式ヘルパ（`merton_fraction/value`、π を [0, kHjbPiMax] に制約）と `hjb_sanitize` が文書化された式・クランプに従う | U | ✅ |
+| HJB-05 | 格子細分で解析解への誤差が減少 | N | ✅ |
+| HJB-06 | 時間整合: T/2 から V(·,T/2) を終端として解いた結果 = 全区間解（γ ∈ {0.5, 1, 3}、`init(q, values())` の自己エイリアスも可） | N | ✅ |
 | HJBSCENE-01 | Model 契約充足、Snapshot（V(w) 固定格子, π*(w)）は POD | K | ⬜ |
 | HJBSCENE-02 | 1 step = 1 時間反復、SetParam(γ) で π* が変わる | U | ⬜ |
 
