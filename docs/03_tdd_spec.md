@@ -358,20 +358,20 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| LOB-01 | 空の板は best bid / ask を持たない | U | ⬜ |
-| LOB-02 | 指値買いを入れると best bid になる | U | ⬜ |
-| LOB-03 | bid は価格降順、ask は昇順で列挙される | P | ⬜ |
-| LOB-04 | ランダム操作 1e5 回の後も best bid < best ask | P | ⬜ |
-| LOB-05 | 同価格では先に入った注文が先に約定（価格時間優先） | U | ⬜ |
-| LOB-06 | 部分約定で残数量が板に残る | U | ⬜ |
-| LOB-07 | 取消で注文が消え、最後の注文ならレベルも消える | U | ⬜ |
-| LOB-08 | 数量保存: 約定数量の買い合計 = 売り合計、板の数量 + 約定 = 投入 − 取消 | P | ⬜ |
-| LOB-09 | 成行は複数レベルを掃く | U | ⬜ |
-| LOB-10 | スプレッドを跨ぐ指値は攻撃的に約定し、残りが板に載る | U | ⬜ |
-| LOB-11 | 自己交差なし（板に bid ≥ ask が存在しない） | P | ⬜ |
-| LOB-12 | seed 固定フローで約定列が bit 一致 | D | ⬜ |
-| LOB-13 | `depth(N)` は上位 N レベルの (価格, 数量, 件数) | U | ⬜ |
-| LOB-14 | 注文プールはウォームアップ後にアロケーションしない。枯渇時は拒否を返す | U | ⬜ |
+| LOB-01 | 空の板は best bid / ask を持たない | U | ✅ |
+| LOB-02 | 指値買いを入れると best bid になる | U | ✅ |
+| LOB-03 | bid は価格降順、ask は昇順で列挙される | P | ✅ |
+| LOB-04 | ランダム操作 1e5 回の後も best bid < best ask | P | ✅ |
+| LOB-05 | 同価格では先に入った注文が先に約定（価格時間優先） | U | ✅ |
+| LOB-06 | 部分約定で残数量が板に残る | U | ✅ |
+| LOB-07 | 取消で注文が消え、最後の注文ならレベルも消える | U | ✅ |
+| LOB-08 | 数量保存: 約定数量の買い合計 = 売り合計、板の数量 + 約定 = 投入 − 取消 | P | ✅ |
+| LOB-09 | 成行は複数レベルを掃く | U | ✅ |
+| LOB-10 | スプレッドを跨ぐ指値は攻撃的に約定し、残りが板に載る | U | ✅ |
+| LOB-11 | 自己交差なし（板に bid ≥ ask が存在しない） | P | ✅ |
+| LOB-12 | seed 固定フローで約定列が bit 一致 | D | ✅ |
+| LOB-13 | `depth(N)` は上位 N レベルの (価格, 数量, 件数) | U | ✅ |
+| LOB-14 | 注文プールはウォームアップ後にアロケーションしない。枯渇時は拒否を返す | U | ✅ |
 
 ### 6.2 HAWKES — `core/models/hawkes.hpp`
 
@@ -489,7 +489,7 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 | BENCH-02 | StreamingModel step+snapshot | < 100 ns | M0 | ✅ 39 ns |
 | BENCH-03 | BS ストリップ SIMD vs スカラ（N=1024、厳密版: BS-10 で bit 一致） | ≥ 1.2×（改定） | M1 | ✅ 1.19〜1.28×（GCC 15, SSE2〜AVX-512） |
 | BENCH-04 | サーフェス 200×200 の z・法線更新 | < 2 ms | M2 | ✅ 0.22 ms（加重中心差分、GCC 15 -O3） |
-| BENCH-05 | マッチングエンジン 1e6 注文/秒（dropped 0） | ≥ 1e6/s | M3 | ⬜ |
+| BENCH-05 | マッチングエンジン 1e6 注文/秒（dropped 0） | ≥ 1e6/s | M3 | ✅ 19〜22 M 注文/秒（`MatchingEngine<65536,4096>`、70/10/20 混合、拒否 0） |
 | BENCH-06 | AAD 全 Greeks / 価格 1 回 | ≤ 5× | M5 | ⬜ |
 
 ---
