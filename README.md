@@ -20,15 +20,24 @@
 | [docs/02_implementation_plan.md](docs/02_implementation_plan.md) | 実装計画書 — M0〜M5 のスコープ・タスク・完了条件・リスク |
 | [docs/03_tdd_spec.md](docs/03_tdd_spec.md) | TDD 仕様網羅 — 全モジュールの仕様を ID 付きテストケースとして列挙（M0 は実装済） |
 
-## M0（この時点）で動くもの
+## M1（この時点）で動くもの
 
 ![M0 viewer](docs/m0_viewer.png)
 
-- `core/`   : `Gbm`（厳密離散化）, `Welford`, `EwmaVariance`, `Rng`
+メニューバーの **Scene** で 4 シーンを切り替える（同時に走るシーンは 1 つ。各シーンは独立した Runner + Panel の対）。
+
+| シーン | コア | 描画 |
+|---|---|---|
+| Streaming（M0） | `Gbm`（厳密離散化）+ `Welford` + `EwmaVariance` | Spot / Volatility / Control |
+| Greeks | `black_scholes.hpp`（価格・Δ Γ ν Θ ρ、SIMD ストライク配列版はスカラ版と bit 一致） | Greeks vs K（2 軸）/ Γ(S,T) ヒートマップ / Control（r, σ, T, ストライク幅, スポットショック） |
+| GARCH | `garch.hpp`（フィルタ・尤度・MLE）+ `optim.hpp`（Nelder–Mead / BFGS） | σ_t 真値 vs 推定 / 尤度面 L(α,β) + 最適化軌跡 / Control（ω α β, optimizer, 窓） |
+| Kalman pair | `mat.hpp` + `kalman.hpp`（Joseph 形、縮退観測は数えてスキップ） | 2 価格 / ヘッジ比率 β̂ ± 2σ 帯 / スプレッド / Control |
+
+- `core/`   : `Gbm`, `Welford`, `EwmaVariance`, `Rng`, `black_scholes`, `optim`, `garch`, `Mat`, `Kalman`
 - `bridge/` : `SpscRing`, `Command`, `Model` concept, `SimClock`, `Runner`
-- `scenes/` : `StreamingModel`（GBM + 逐次統計 → POD Snapshot）
-- `viz/`    : Spot / Volatility の 2 パネルと Control パネル（mu・sigma・lambda・速度・Pause/Step/Reset）
-- `tests/`  : Catch2 v3, 59 テストケース（単体・数値・性質・並行）+ ベンチマーク
+- `scenes/` : `StreamingModel`, `GreeksModel`, `GarchModel`, `KalmanPairModel`（すべて POD Snapshot）
+- `viz/`    : `SceneRegistry` / `RunnerScene`（vizcore）, 共通の時計 UI（`clock_controls` + `clock_panel`）, 4 パネル
+- `tests/`  : Catch2 v3, 107 テストケース（単体・数値・性質・統計・並行・契約・決定性）+ ベンチマーク 3 本
 
 ## ビルド
 
@@ -61,12 +70,12 @@ cmake --preset core-only && cmake --build --preset core-only && ctest --preset c
 ## ディレクトリ
 
 ```
-core/    include/quantviz/core/{rng.hpp, models/gbm.hpp, stats/{welford,ewma}.hpp}   外部依存ゼロ
-bridge/  include/quantviz/bridge/{spsc_ring,command,model_concept,sim_clock,runner}.hpp  std のみ
-scenes/  include/quantviz/scenes/streaming_model.hpp                                   core + bridge
-viz/     include/quantviz/viz/history.hpp  src/{main.cpp, panels/streaming_panel.*}   ImGui/ImPlot/GLFW
+core/    include/quantviz/core/{rng, models/gbm, stats/{welford,ewma,optim,garch,kalman}, math/mat, pricing/black_scholes}.hpp   外部依存ゼロ
+bridge/  include/quantviz/bridge/{spsc_ring,command,model_concept,sim_clock,runner}.hpp                                        std のみ
+scenes/  include/quantviz/scenes/{streaming,greeks,garch,kalman_pair}_model.hpp                                                 core + bridge
+viz/     include/quantviz/viz/{history,clock_controls,scene_registry}.hpp  src/{main.cpp, panels/{clock_panel.hpp, *_panel.*}}   ImGui/ImPlot/GLFW
 tests/   Catch2 v3（test_*.cpp = 仕様 ID と 1:1）
-docs/    設計書・実装計画書・TDD 仕様
+docs/    設計書・実装計画書・TDD 仕様（docs/superpowers/plans/ にマイルストーンごとの実行計画）
 ```
 
 ## 依存規則（違反はレビューで差し戻し）

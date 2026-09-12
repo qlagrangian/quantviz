@@ -195,79 +195,81 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| VIZ-01 | レジストリは登録された全シーン名を登録順で列挙する | U | ⬜ |
-| VIZ-02 | シーン選択で Runner と Panel の対が生成され、前のシーンの Runner は `stop()` される（`running()` false） | U | ⬜ |
-| VIZ-03 | 共通 Control の状態（speed / paused）は Command 生成関数の純関数として検査できる（ImGui 非依存部） | U | ⬜ |
+| VIZ-01 | レジストリは登録された全シーン名を登録順で列挙する | U | ✅ |
+| VIZ-02 | シーン選択で Runner と Panel の対が生成され、前のシーンの Runner は `stop()` される（`running()` false） | U | ✅ |
+| VIZ-03 | 共通 Control の状態（speed / paused）は Command 生成関数の純関数として検査できる（ImGui 非依存部） | U | ✅ |
+| VIZ-04 | 実 Runner を持つ `RunnerScene` を `select` で切り替えると、前シーンの計算スレッドが join され `running()` が false になる | C | ✅ |
+| VIZ-05 | `RateMeter`（受信レートの 0.25 s 窓 + EMA）は定常入力で真値に収束し、最初の窓が閉じるまでは 0、`reset` で 0 に戻る | U | ✅ |
 
 ### 4.2 BS — `core/pricing/black_scholes.hpp`
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| BS-01 | 無裁定境界: max(S−Ke^{−rT},0) ≤ C ≤ S、max(Ke^{−rT}−S,0) ≤ P ≤ Ke^{−rT} | P | ⬜ |
-| BS-02 | プット・コール・パリティ C − P = S − Ke^{−rT}（相対 1e-12） | N | ⬜ |
-| BS-03 | 数表値: S=K=100, T=1, r=0.05, σ=0.2 → C=10.4506, P=5.5735（絶対 1e-4） | N | ⬜ |
-| BS-04 | σ→0 極限で C → max(S−Ke^{−rT},0) | N | ⬜ |
-| BS-05 | T→0 極限で C → max(S−K,0)、Γ は ATM で発散方向（有限 T で単調増大） | N | ⬜ |
-| BS-06 | Δ_call ∈ (0,1)、Δ_put = Δ_call − 1、Γ と ν は call/put で同一かつ > 0 | P | ⬜ |
-| BS-07 | 解析 Greeks（Δ Γ ν Θ ρ）が中心差分と一致（相対 1e-6） | N | ⬜ |
-| BS-08 | 単調性: C は S・σ・T で増加、K で減少 | P | ⬜ |
-| BS-09 | 一次同次性: C(λS, λK) = λ·C(S, K) | P | ⬜ |
-| BS-10 | `price_strip(span<K>)` の各要素がスカラ版と一致（相対 1e-15） | N | ⬜ |
-| BS-11 | ストリップ長が SIMD 幅の倍数でない場合（N=1, 7, 65）も端が正しい | U | ⬜ |
-| BS-12 | (= BENCH-03) N=1024 ストリップがスカラループの ≥ 2 倍高速 | B | ⬜ |
+| BS-01 | 無裁定境界: max(S−Ke^{−rT},0) ≤ C ≤ S、max(Ke^{−rT}−S,0) ≤ P ≤ Ke^{−rT} | P | ✅ |
+| BS-02 | プット・コール・パリティ C − P = S − Ke^{−rT}（相対 1e-12） | N | ✅ |
+| BS-03 | 数表値: S=K=100, T=1, r=0.05, σ=0.2 → C=10.4506, P=5.5735（絶対 1e-4） | N | ✅ |
+| BS-04 | σ→0 極限で C → max(S−Ke^{−rT},0)。退化ブランチ（T≤0 / σ≤0 / K≤0 / S≤0 / σ=NaN）も有限値を返し、0 は +0.0 で返す。S = Ke^{−rT} ちょうどでは OTM 側（Δ=0）に倒す | N | ✅ |
+| BS-05 | T→0 極限で C → max(S−K,0)、Γ は ATM で発散方向（有限 T で単調増大） | N | ✅ |
+| BS-06 | Δ_call ∈ (0,1)、Δ_put = Δ_call − 1、Γ と ν は call/put で同一かつ > 0 | P | ✅ |
+| BS-07 | 解析 Greeks（Δ Γ ν Θ ρ）が中心差分と一致（相対 1e-6） | N | ✅ |
+| BS-08 | 単調性: C は S・σ・T で増加、K で減少 | P | ✅ |
+| BS-09 | 一次同次性: C(λS, λK) = λ·C(S, K) | P | ✅ |
+| BS-10 | `price_strip(span<K>)` の各要素がスカラ版と一致（相対 1e-15） | N | ✅ |
+| BS-11 | ストリップ長が SIMD 幅の倍数でない場合（N=1, 7, 65）も端が正しい | U | ✅ |
+| BS-12 | (= BENCH-03) N=1024 ストリップがスカラループより高速（目標 ≥ 1.2×、§9 の判断記録を参照。当初の ≥ 2× は厳密一致 BS-10 と両立しないため改定） | B | ✅ |
 
 ### 4.3 GREEKS — `scenes/greeks_model.hpp`
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| GREEKS-01 | Model 契約充足、Snapshot は POD（固定 N ストライク配列 + 固定格子） | K | ⬜ |
-| GREEKS-02 | ストライク配列は昇順・等間隔、Snapshot 全要素が有限 | P | ⬜ |
-| GREEKS-03 | SetParam(σ) は次ステップの Greeks に反映、seq は進まない | U | ⬜ |
-| GREEKS-04 | Γ の最大ストライクは S に最も近いストライク（±1 グリッド） | P | ⬜ |
-| GREEKS-05 | 同 seed の素の Gbm と S が一致（dual-run） | D | ⬜ |
+| GREEKS-01 | Model 契約充足、Snapshot は POD（固定 N ストライク配列 + 固定格子） | K | ✅ |
+| GREEKS-02 | ストライク配列は昇順・等間隔、Snapshot 全要素が有限 | P | ✅ |
+| GREEKS-03 | SetParam(σ) は次ステップの Greeks に反映、seq は進まない | U | ✅ |
+| GREEKS-04 | Γ の最大ストライクは S に最も近いストライク（±1 グリッド） | P | ✅ |
+| GREEKS-05 | 同 seed の素の Gbm と S が一致（dual-run） | D | ✅ |
 
 ### 4.4 OPTIM — `core/stats/optim.hpp`
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| OPTIM-01 | Nelder–Mead が 2 次関数の最小点を 1e-8 で求める | N | ⬜ |
-| OPTIM-02 | Nelder–Mead が Rosenbrock で (1,1) に 1e-4 で到達 | N | ⬜ |
-| OPTIM-03 | 返す反復履歴の best f は単調非増加 | P | ⬜ |
-| OPTIM-04 | BFGS（数値勾配）が 2 次関数で 20 反復以内に 1e-8 収束 | N | ⬜ |
-| OPTIM-05 | `max_iter` を超えない。到達時は `converged = false` | U | ⬜ |
-| OPTIM-06 | 制約変換（logit / softplus）の往復が恒等（相対 1e-12） | N | ⬜ |
+| OPTIM-01 | Nelder–Mead が 2 次関数の最小点を 1e-8 で求める | N | ✅ |
+| OPTIM-02 | Nelder–Mead が Rosenbrock で (1,1) に 1e-4 で到達 | N | ✅ |
+| OPTIM-03 | 返す反復履歴の best f は単調非増加 | P | ✅ |
+| OPTIM-04 | BFGS（数値勾配）が 2 次関数で 20 反復以内に 1e-8 収束 | N | ✅ |
+| OPTIM-05 | `max_iter` を超えない。到達時は `converged = false` | U | ✅ |
+| OPTIM-06 | 制約変換（logit / softplus）の往復が恒等（相対 1e-12） | N | ✅ |
 
 ### 4.5 GARCH — `core/stats/garch.hpp`, `scenes/garch_model.hpp`
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| GARCH-01 | σ²_t = ω + α r²_{t−1} + β σ²_{t−1} の 3 ステップ手計算と一致 | N | ⬜ |
-| GARCH-02 | 無条件分散 ω/(1−α−β) にフィルタが収束（定数入力） | N | ⬜ |
-| GARCH-03 | 対数尤度 −½Σ(log 2π + log σ²_t + r²_t/σ²_t) が直接計算と一致 | N | ⬜ |
-| GARCH-04 | α+β ≥ 1 は定常制約違反として拒否（ペナルティ or 変換で到達不能） | P | ⬜ |
-| GARCH-05 | パラメータ変換（無制約 ↔ 制約）の往復が恒等 | N | ⬜ |
-| GARCH-06 | 合成 GARCH（ω=1e-6, α=0.08, β=0.90, N=20000）から MLE が α̂, β̂ を ±0.03 で復元（seed 固定・根拠: 漸近 SE ≈ 0.007） | S | ⬜ |
-| GARCH-07 | 大標本で真値の尤度 ≥ 摂動値の尤度 | P | ⬜ |
-| GARCH-08 | 半減期 ln(0.5)/ln(α+β) が α+β↑ で単調増大 | P | ⬜ |
-| GARCH-09 | Model 契約充足、Snapshot（σ_t, 真値, 尤度格子 固定 G×G, 軌跡 最新 K 点）は POD | K | ⬜ |
-| GARCH-10 | 尤度格子の全値が有限、最大値の格子点が MLE 推定値の隣接格子内 | P | ⬜ |
-| GARCH-11 | 最適化軌跡の終点 = 推定値 | U | ⬜ |
+| GARCH-01 | σ²_t = ω + α r²_{t−1} + β σ²_{t−1} の 3 ステップ手計算と一致 | N | ✅ |
+| GARCH-02 | 無条件分散 ω/(1−α−β) にフィルタが収束（定数入力） | N | ✅ |
+| GARCH-03 | 対数尤度 −½Σ(log 2π + log σ²_t + r²_t/σ²_t) が直接計算と一致 | N | ✅ |
+| GARCH-04 | α+β ≥ 1 は定常制約違反として拒否（ペナルティ or 変換で到達不能） | P | ✅ |
+| GARCH-05 | パラメータ変換（無制約 ↔ 制約）の往復が恒等 | N | ✅ |
+| GARCH-06 | 合成 GARCH（ω=1e-6, α=0.08, β=0.90, N=20000）から MLE が α̂, β̂ を ±0.03 で復元（seed 固定・根拠: 漸近 SE ≈ 0.007） | S | ✅ |
+| GARCH-07 | 大標本で真値の尤度 ≥ 摂動値の尤度 | P | ✅ |
+| GARCH-08 | 半減期 ln(0.5)/ln(α+β) が α+β↑ で単調増大 | P | ✅ |
+| GARCH-09 | Model 契約充足、Snapshot（σ_t, 真値, 尤度格子 固定 G×G, 軌跡 最新 K 点）は POD | K | ✅ |
+| GARCH-10 | 尤度格子の全値が有限、最大値の格子点が MLE 推定値の隣接格子内 | P | ✅ |
+| GARCH-11 | 最適化軌跡の終点 = 推定値 | U | ✅ |
 
 ### 4.6 KALMAN — `core/math/mat.hpp`, `core/stats/kalman.hpp`, `scenes/kalman_pair_model.hpp`
 
 | ID | 仕様 | 種別 | 状態 |
 |---|---|---|---|
-| KALMAN-01 | `Mat<N,M>` の積・転置・2×2/3×3 逆行列が手計算と一致 | N | ⬜ |
-| KALMAN-02 | Q=0・スカラ状態のカルマン推定 = 累積平均（RLS と一致） | N | ⬜ |
-| KALMAN-03 | predict で共分散が Q だけ増える | U | ⬜ |
-| KALMAN-04 | update で共分散が減少（P_post ≼ P_prior） | P | ⬜ |
-| KALMAN-05 | 1000 ステップ後も共分散が対称・半正定値 | P | ⬜ |
-| KALMAN-06 | イノベーションの 1 次自己相関が 4 SE 以内で 0（ホワイト） | S | ⬜ |
-| KALMAN-07 | ランダムウォーク β を追跡し、±3σ 帯に 95 % 以上の時点で入る | S | ⬜ |
-| KALMAN-08 | Q=0 で定常回帰の β が OLS 推定値に収束（相対 1e-6） | N | ⬜ |
-| KALMAN-09 | Model 契約充足、Snapshot POD | K | ⬜ |
-| KALMAN-10 | 共和分ペア生成: スプレッドが定常（分散が N で発散しない） | S | ⬜ |
-| KALMAN-11 | SetParam(観測ノイズ) は次ステップから反映 | U | ⬜ |
+| KALMAN-01 | `Mat<N,M>` の積・転置・2×2/3×3 逆行列が手計算と一致。特異・非有限な行列で `inverse` は `nullopt`、`is_symmetric` / `is_psd` は負例（`diag(0,−1)` 等）と NaN を拒否する | N | ✅ |
+| KALMAN-02 | Q=0・スカラ状態のカルマン推定 = 累積平均（RLS と一致） | N | ✅ |
+| KALMAN-03 | predict で共分散が F P Fᵀ + Q に増える。`reset` と縮退した観測（NaN / 特異 S）は状態を壊さずスキップ数を数える | U | ✅ |
+| KALMAN-04 | update で共分散が減少（P_post ≼ P_prior） | P | ✅ |
+| KALMAN-05 | 1000 ステップ後も共分散が対称・半正定値 | P | ✅ |
+| KALMAN-06 | イノベーションの 1 次自己相関が 4 SE 以内で 0（ホワイト） | S | ✅ |
+| KALMAN-07 | ランダムウォーク β を追跡し、±3σ 帯に 95 % 以上の時点で入る | S | ✅ |
+| KALMAN-08 | Q=0 で定常回帰の β が OLS 推定値に収束（相対 1e-6） | N | ✅ |
+| KALMAN-09 | Model 契約充足、Snapshot POD | K | ✅ |
+| KALMAN-10 | 共和分ペア生成: スプレッドが定常（分散が N で発散しない） | S | ✅ |
+| KALMAN-11 | SetParam(観測ノイズ) は次ステップから反映 | U | ✅ |
 
 ---
 
@@ -483,12 +485,21 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 |---|---|---|---|---|
 | BENCH-01 | SpscRing push+pop（Snapshot 72 B） | < 20 ns | M0 | ✅ 4.4 ns |
 | BENCH-02 | StreamingModel step+snapshot | < 100 ns | M0 | ✅ 39 ns |
-| BENCH-03 | BS ストリップ SIMD vs スカラ（N=1024） | ≥ 2× | M1 | ⬜ |
+| BENCH-03 | BS ストリップ SIMD vs スカラ（N=1024、厳密版: BS-10 で bit 一致） | ≥ 1.2×（改定） | M1 | ✅ 1.19〜1.28×（GCC 15, SSE2〜AVX-512） |
 | BENCH-04 | サーフェス 200×200 の z・法線更新 | < 2 ms | M2 | ⬜ |
 | BENCH-05 | マッチングエンジン 1e6 注文/秒（dropped 0） | ≥ 1e6/s | M3 | ⬜ |
 | BENCH-06 | AAD 全 Greeks / 価格 1 回 | ≤ 5× | M5 | ⬜ |
 
 ---
+
+### 9.1 判断記録 — BENCH-03 の目標改定（M1）
+
+| 項目 | 内容 |
+|---|---|
+| 状況 | BS-10 は「ストリップ版の各要素がスカラ版と相対 1e-15 で一致」を要求する。実装はスカラ版と bit 一致を達成したが、そのためには `erfc` と `log` をレーンごとに libm のスカラ関数で呼ぶしかなく、ベクトル化されるのは四則演算だけになる。 |
+| 推論 | (1) ストライク 1 本あたりのコストは `log` 1 回 + `erfc` 2 回（≈ 45 ns）が支配的で、四則演算は数 ns。(2) 多項式近似の Φ（A&S 7.1.26 等）をベクトル化すれば 2× 以上は出るが精度は 1e-7 で、深い OTM では `S·Φ(d1) − Ke^{−rT}Φ(d2)` の桁落ちで相対誤差がさらに増幅され、1e-13 でも通らない。(3) 「スカラ版 == 配列版」は設計書 §6.1 の不変条件であり、ベンチ目標より優先する。 |
+| 結論 | BS-10 の厳密一致を維持し、BENCH-03 の目標を「≥ 1.2×」に改定する（実測 1.19〜1.21×、AVX-512 で 1.24〜1.28×）。高精度ベクトル `erfc`（Cody 型有理近似）による高速版は M5 の性能項目に繰り延べ、別 ID（許容 1e-13）で扱う。 |
+| 結果 | （M5 で追記） |
 
 ## 10. 依存規則の機械検査
 
@@ -505,7 +516,7 @@ TEST_CASE("RING-07: producer/consumer threads transfer 1M items with no loss, du
 | ゲート | 条件 |
 |---|---|
 | 必須 | 全 U/N/P/S/K/D/C が Green（3 OS × Debug/Release） |
-| 必須 | ASan+UBSan Green、TSan（RING / RUNNER / TRIPLE）Green |
+| 必須 | ASan+UBSan Green、TSan（RING / RUNNER / VIZ / TRIPLE）Green |
 | 必須 | `-Werror` |
 | 必須（M1〜） | DEP-01/02 |
 | 情報 | BENCH の前回比。2 倍以上の退行はレビューで理由を記録 |

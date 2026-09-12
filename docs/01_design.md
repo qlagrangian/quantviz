@@ -195,10 +195,11 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | `models/gbm.hpp` ✅ | GBM 厳密離散化 | `step(dt)→log return`, `spot()`, `set_mu/sigma`, `reset(seed)` | `spot > 0`。σ<0 は 0 にクランプ。`reset` は mu/sigma を保持 |
 | `stats/welford.hpp` ✅ | 逐次平均・分散 | `push`, `mean`, `variance`(n-1), `population_variance` | n<2 で分散 0。O(1) 更新 |
 | `stats/ewma.hpp` ✅ | EWMA 分散（平均ゼロ仮定） | `push`, `variance`, `volatility`, `set_lambda` | λ∈(0,1) にクランプ。初回は r² で初期化 |
-| `pricing/black_scholes.hpp` 🔜M1 | BS 価格・Greeks、ストライク配列版（SIMD） | `price(S,K,T,r,σ,type)`, `greeks(...)`, `price_strip(span<K>)` | put-call parity、境界条件、スカラ版 == 配列版 |
-| `stats/garch.hpp` 🔜M1 | GARCH(1,1) 尤度・フィルタ | `log_likelihood(ω,α,β, span<r>)`, `filter(...)` | α+β<1 の定常制約。σ²>0 |
-| `stats/optim.hpp` 🔜M1 | Nelder-Mead / BFGS | `minimize(f, x0, opts)→{x, f, iters, path}` | 反復履歴を返す（尤度面上の軌跡描画用） |
-| `stats/kalman.hpp` 🔜M1 | 線形カルマン（固定サイズ） | `predict`, `update(z)`, `state`, `cov` | 共分散は対称・半正定値 |
+| `pricing/black_scholes.hpp` ✅M1 | BS 価格・Greeks、ストライク配列版（SIMD） | `bs_price(S,K,T,r,σ,type)`, `bs_greeks(...)`, `bs_price_strip(S, span<K>, T, r, σ, type, span<out>)`, `norm_cdf` | put-call parity、境界条件、スカラ版 == 配列版（bit 一致。算術は `bs_price_block<Ops>` 1 本に集約し、FMA 縮約は `QUANTVIZ_BS_USE_FMA` で両経路同一） |
+| `stats/garch.hpp` ✅M1 | GARCH(1,1) 尤度・フィルタ・MLE・生成 | `garch_filter`, `garch_log_likelihood`（非定常は −inf）, `garch_from/to_unconstrained`（softplus + sigmoid、α+β<1 が到達不能）, `garch_fit` / `garch_fit_into`（割り当て再利用、参照 3 点の尤度で明確に負けた時だけ再試行）, `garch_simulate`, `garch_half_life` | α+β<1 の定常制約。σ²>0。ローリング再推定は `max_iter=200` で平均 0.4〜0.6 ms |
+| `stats/optim.hpp` ✅M1 | Nelder–Mead / BFGS（数値勾配 + Armijo） | `nelder_mead` / `bfgs`（値返し）と `*_into`（`OptimResult` 再利用で割り当てなし）, `OptimOptions`, 制約変換 `to_unit` / `to_positive` | `path` は常に非空で `front == x0`, `back == x`。非有限な目的関数では `converged=false` |
+| `math/mat.hpp` ✅M1 | 固定サイズ行列（`std::array`、ヒープなし） | `Mat<R,C>`, `transpose`, `inverse()`→`optional`（≤3×3 閉形式、`tol` は行列式スケールに対する相対値）, `is_symmetric`, `is_psd` | POD。NaN は全述語で拒否 |
+| `stats/kalman.hpp` ✅M1 | 線形カルマン（固定サイズ） | `predict(F,Q)`, `update(H,z,R)`→イノベーション（事前残差）, `state`, `cov`, `reset`, `skipped_updates` | Joseph 形 + 明示的対称化で共分散は対称・半正定値。NaN 観測・特異 S は状態を壊さずスキップして数える（例外なし） |
 | `pricing/fdm_cn.hpp` 🔜M2 | Crank–Nicolson + PSOR（American） | `init(grid)`, `step_backward()`, `values()`, `exercise_boundary()` | American ≥ intrinsic、≥ European |
 | `math/tridiag.hpp` 🔜M2 | Thomas 法 | `solve(a,b,c,d)` | 密行列解と一致 |
 | `micro/order_book.hpp` 🔜M3 | 板・マッチング | `submit(limit/market)`, `cancel`, `best_bid/ask`, `depth(N)` | bid<ask、価格時間優先、数量保存 |
@@ -226,9 +227,9 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | シーン | Model | Snapshot の主内容 | Param |
 |---|---|---|---|
 | Streaming ✅ | `StreamingModel` | t, spot, log_return, Welford 平均/分散, EWMA 分散, μ/σ 真値, seq | mu, sigma, ewma_lambda |
-| Greeks 🔜M1 | `GreeksModel` | S, グリークス配列（ストライク軸 固定 N）, サーフェス格子（S×T 固定） | S, r, σ, T |
-| Garch 🔜M1 | `GarchModel` | σ_t 推定, 真値, 尤度面（α×β 固定格子）, 最適化軌跡（最新 K 点） | ω, α, β（真値）, optimizer |
-| Kalman 🔜M1 | `KalmanPairModel` | 2 価格, β 推定, β 分散, スプレッド | 観測ノイズ, 状態ノイズ, 真の β |
+| Greeks ✅M1 | `GreeksModel` | S（GBM, 経路ボラは固定）, 64 ストライクの price/Δ/Γ/ν/Θ/ρ（`bs_price_strip` の SIMD 経路を本番使用）, Γ(S,T) 48×32 格子（r/σ/T が変わった時だけ再計算）, 真値 r/σ/T, seq — 16.5 KB（M1 の例外、SnapCap 256） | スポットショック（×倍率, 非正・非有限は無視）, r, 価格ボラ σ, T, ストライク幅 |
+| Garch ✅M1 | `GarchModel` | 合成 GARCH の r_t と σ²_t 真値、ローリング窓（既定 500 日、10 ステップごとに `garch_fit_into` で warm-start 再推定）の推定 σ²・(ω̂,α̂,β̂)・対数尤度、尤度面 L(α,β) 32×32（ω=ω̂ の断面、非定常点は有限最小値にクランプ）、最適化軌跡（先頭から等間引きで最大 64 点、終点 = 推定値）、seq — 9.8 KB（M1 の例外、SnapCap 256）。窓を広げた直後は埋まるまで推定を出さない | ω, α, β（真値。α+β ≥ kMax なら比を保って縮小）, optimizer（NM / BFGS）, 窓長 [50, 2048] |
+| Kalman ✅M1 | `KalmanPairModel` | x, y（y = β_t x + ε）, β 真値, β̂, β 分散, スプレッド（事後残差）, イノベーション（事前残差）, skipped（縮退観測のスキップ数）, seq — 96 B | 観測ノイズ, 状態ノイズ, 真の β（β_t は κ=0.002 で真値へ平均回帰するランダムウォーク。フィルタは F=1 を仮定する意図的な軽い誤特定） |
 | Fdm 🔜M2 | `FdmAmericanModel` | V(S) の現在ステップ, 行使境界, 残り反復数 | K, r, σ, q, グリッド |
 | Lob 🔜M3 | `LobModel` | 上位 N レベル bid/ask, 直近約定, λ(t) | 到着率, Hawkes α/β, 大口注入 |
 | Lsm / Exec / Hjb 🔜M4 | 各 Model | パス束の縮約, 執行軌道, 価値関数格子 | シーン固有 |
@@ -241,10 +242,13 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | `history.hpp`（vizcore） ✅ | 描画側の固定長循環履歴。ImPlot の `offset` 規約（満杯時 offset = 最古の index） |
 | `panels/streaming_panel.*` ✅ | Spot / Volatility / Control の 3 ウィンドウ |
 | `main.cpp` ✅ | GLFW + ImGui + ImPlot の起動・フレームループ・終了 |
-| `panels/<scene>_panel.*` 🔜 | シーンごとに 1 パネル。`draw(Runner<M>&)` の形を揃える |
+| `panels/{streaming,greeks,garch,kalman}_panel.*` ✅M1 | シーンごとに 1 パネル。`draw(Runner&)` + `make_<scene>_scene()`。共通部品は `panels/panel_common.hpp`（`now_seconds`, `kTradingDays`, `kPanelTop`, `setup_follow_axis`）と `viz/rate_meter.hpp`（受信レート EMA）。Reset 時は `prev_seq_` ガードでリング内の古い Snapshot を捨てる |
 | `gl/surface_renderer.*` 🔜M2 | グリッド → 三角形メッシュ → 法線 → 単純ライティング → カメラ。ImGui ウィンドウ内にテクスチャとして描く |
-| `panels/common_controls.*` 🔜M1 | 時計 UI（速度・Pause・Step・Reset）とテレメトリの共通化 |
-| `scene_registry.*` 🔜M1 | 起動時のシーン選択（各シーンは独立した Runner を持つ） |
+| `clock_controls.hpp`（vizcore）✅M1 | 時計 UI の状態 `ClockControlState` と Command 生成の純関数（`toggle_pause`, `set_speed`, `step_once`, `reset`, `step_allowed`）。ImGui 非依存でテスト可能（VIZ-03） |
+| `panels/clock_panel.hpp` ✅M1 | 上記に ImGui を被せた共通ウィジェット `draw_clock_controls` と共通テレメトリ行 `draw_runner_telemetry`。全シーンの Control ウィンドウが使う |
+| `rate_meter.hpp`（vizcore）✅M1 | 受信 Snapshot レートの表示用メーター（0.25 s 窓 + 係数 0.2 の EMA）。時刻源を持たず壁時計を引数で受けるので単体テストできる（VIZ-05）。全パネルが 1 つずつ持つ |
+| `panels/panel_common.hpp` ✅M1 | パネル共通の小物: `now_seconds()`, `kTradingDays`, `kPanelTop`（メニューバー下の初期 y）, `setup_follow_axis()`（最新点に追従する X 軸） |
+| `scene_registry.hpp`（vizcore）✅M1 | `Scene`（Runner + Panel の型消去）, `RunnerScene<M, Panel, SnapCap>`（唯一の具象、デストラクタで join）, `SceneRegistry`（名前→生成関数。`select` は前シーンを `stop()` してから破棄し、新シーンを `start()`）。`main.cpp` はメニューバーで切り替えるだけ。生きているシーンは常に高々 1 つ |
 
 ---
 
@@ -256,7 +260,7 @@ M2 の CN-FDM では「後ろ向き反復」の 1 ステップを `StepOnce` で
 | false sharing | ring の head / tail / 各キャッシュを別キャッシュラインに配置 | `RING-08`（レイアウト検査） |
 | 同期コスト | SPSC + acquire/release のみ。mutex・condvar なし | `BENCH-01`（目標 < 20 ns / push+pop） |
 | 描画とコアの分離 | vsync（60 fps）とコアの `steps_per_second` は独立。描画の遅延はコアに伝播しない（drop で吸収） | テレメトリ `dropped`, `queued` |
-| SIMD 🔜M1 | Black–Scholes のストライク配列版で `std::experimental::simd` または手書き AVX2。スカラ版と一致をテスト | `BS-xx` |
+| SIMD ✅M1 | Black–Scholes のストライク配列版で `std::experimental::simd`（無ければ AVX2 intrinsics、無ければスカラ）。スカラ版と **bit 一致**（`FP_FAST_FMA` に応じて両経路で同じ縮約を行う）。超越関数はレーンごとに libm を呼ぶため速度は ≈1.2×。高速近似版は M5 | `BS-10`, `BENCH-03` |
 | メモリ配置 🔜M2/M3 | FDM グリッドは連続配列（SoA）、板は価格レベル配列 + intrusive list | `BENCH-xx` |
 | 計測 🔜M5 | シーンごとの `step` 時間・フレーム時間・dropped をパフォーマンスパネルで常時表示。`perf` でキャッシュミス |  |
 

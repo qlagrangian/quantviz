@@ -10,3 +10,6 @@ vcpkg_installed/
 
 # WSL / Windows download markers (NTFS alternate data streams)
 *:Zone.Identifier
+build-*/
+imgui.ini
+*.whl
